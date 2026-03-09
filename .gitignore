@@ -12,3 +12,4 @@ __pycache__/
 # Spec documents (keep out of public repo)
 *.docx
 *.pdf
+.vs/
