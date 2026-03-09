@@ -309,135 +309,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a822ea5bc7590f9d40f1ba12c0dc3c2760f3482c6984db1573ad11031420831"
 
 [[package]]
-name = "codex-cli"
-version = "0.1.0"
-dependencies = [
- "axum",
- "blake3",
- "chrono",
- "clap",
- "codex-coord",
- "codex-core",
- "codex-eventlog",
- "codex-graph",
- "codex-parse",
- "codex-validate",
- "futures-util",
- "git2",
- "reqwest",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tokio-tungstenite 0.24.0",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "codex-coord"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "chrono",
- "codex-core",
- "codex-graph",
- "codex-parse",
- "git2",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "codex-core"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "codex-eventlog"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "chrono",
- "codex-core",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "codex-graph"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "codex-core",
- "petgraph",
- "thiserror 2.0.18",
- "tracing",
-]
-
-[[package]]
-name = "codex-lsp"
-version = "0.1.0"
-dependencies = [
- "clap",
- "codex-core",
- "codex-eventlog",
- "codex-graph",
- "codex-parse",
- "futures-util",
- "git2",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tower 0.4.13",
- "tower-lsp",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "codex-parse"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "codex-core",
- "rowan",
- "thiserror 2.0.18",
- "tracing",
- "tree-sitter",
- "tree-sitter-language",
- "tree-sitter-python",
- "tree-sitter-typescript",
-]
-
-[[package]]
-name = "codex-validate"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "codex-core",
- "codex-graph",
- "thiserror 2.0.18",
- "tracing",
-]
-
-[[package]]
 name = "colorchoice"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1255,6 +1126,135 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "tempfile",
+]
+
+[[package]]
+name = "nex-cli"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "blake3",
+ "chrono",
+ "clap",
+ "futures-util",
+ "git2",
+ "nex-coord",
+ "nex-core",
+ "nex-eventlog",
+ "nex-graph",
+ "nex-parse",
+ "nex-validate",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-tungstenite 0.24.0",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "nex-coord"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "chrono",
+ "git2",
+ "nex-core",
+ "nex-graph",
+ "nex-parse",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "nex-core"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "nex-eventlog"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "chrono",
+ "nex-core",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "nex-graph"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "nex-core",
+ "petgraph",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
+name = "nex-lsp"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "futures-util",
+ "git2",
+ "nex-core",
+ "nex-eventlog",
+ "nex-graph",
+ "nex-parse",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tower 0.4.13",
+ "tower-lsp",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "nex-parse"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "nex-core",
+ "rowan",
+ "thiserror 2.0.18",
+ "tracing",
+ "tree-sitter",
+ "tree-sitter-language",
+ "tree-sitter-python",
+ "tree-sitter-typescript",
+]
+
+[[package]]
+name = "nex-validate"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "nex-core",
+ "nex-graph",
+ "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
