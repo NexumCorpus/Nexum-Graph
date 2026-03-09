@@ -13,6 +13,9 @@ __pycache__/
 *.docx
 *.pdf
 .vs/
+dist/
+release-fixtures/
+.smoke/
 extensions/*/node_modules/
 extensions/*/out/
 *.vsix

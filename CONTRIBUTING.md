@@ -24,7 +24,14 @@ Recommended tooling:
 - `clippy`
 - `rustfmt`
 - Python 3.10+
+- Node 20+
 - Git
+
+Optional but recommended for local merge safety:
+
+```bash
+nex check --install-hook
+```
 
 ## Repository layout
 
@@ -58,6 +65,7 @@ python tools/verify_slice.py --changed
 For a full sweep, use:
 
 ```bash
+python tools/release_tools.py assert-version-parity --tag v0.1.0
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --check
@@ -79,6 +87,7 @@ That usually means one or more of:
 
 - `README.md`
 - `CONTRIBUTING.md`
+- `RELEASING.md`
 - `SECURITY.md`
 - command help text
 
@@ -104,3 +113,7 @@ Good pull requests generally include:
 - any residual risk or follow-up work
 
 If the change is user-visible, include the operator-facing usage path, not just the implementation detail.
+
+If the change affects packaging, installers, workflows, or artifact naming, update [RELEASING.md](./RELEASING.md) in the same pull request.
+
+If the change affects `nex check`, git hook behavior, or the published GitHub Action in [action.yml](./action.yml), update [README.md](./README.md) with the operator-facing usage path in the same pull request.

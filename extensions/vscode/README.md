@@ -9,17 +9,35 @@ What you get:
 - a command to inspect semantic diff for the current file
 - per-language upstream proxy configuration
 
-## Prerequisites
+## Fastest install
 
-1. Build the Rust binaries:
+1. Install Nexum Graph binaries from the latest release.
+
+macOS / Linux:
 
 ```bash
-cargo build --release -p nex-lsp -p nex-cli
+curl -fsSL https://raw.githubusercontent.com/NexumCorpus/Nexum-Graph/main/install.sh | sh
 ```
 
-2. Make `nex-lsp` available on your `PATH`, or point the extension at it with `nexumGraph.nexPath`.
+Windows PowerShell:
 
-3. Install an upstream server if you want proxied standard LSP behavior through `nex-lsp`:
+```powershell
+irm https://raw.githubusercontent.com/NexumCorpus/Nexum-Graph/main/install.ps1 | iex
+```
+
+2. Download `nexum-graph-vscode-X.Y.Z.vsix` from the latest [GitHub Release](https://github.com/NexumCorpus/Nexum-Graph/releases).
+3. Install the `.vsix` from VS Code:
+
+   1. Open Extensions
+   2. Select `...`
+   3. Choose `Install from VSIX...`
+   4. Pick the downloaded package
+
+4. Make sure `nex-lsp` is on your `PATH`, or point the extension at it with `nexumGraph.nexPath`.
+
+## Prerequisites
+
+Install an upstream server if you want proxied standard LSP behavior through `nex-lsp`:
 
 - TypeScript / JavaScript: `npm install -g typescript-language-server typescript`
 - Python: `npm install -g pyright`
@@ -27,21 +45,15 @@ cargo build --release -p nex-lsp -p nex-cli
 
 If an upstream command is missing, the extension falls back to overlay-only mode for that language instead of failing.
 
-## Install From Source
+## Build from source
 
 ```bash
+cargo build --release -p nex-lsp -p nex-cli
 cd extensions/vscode
 npm install
 npm run compile
 npm run package
 ```
-
-Install the generated `.vsix` from VS Code:
-
-1. Open Extensions
-2. Select `...`
-3. Choose `Install from VSIX...`
-4. Pick the generated package
 
 ## Key Settings
 

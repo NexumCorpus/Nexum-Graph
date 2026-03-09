@@ -1,0 +1,11 @@
+Nexum Graph release bundle
+
+This archive contains:
+- nex: the Nexum Graph CLI
+- nex-lsp: the Nexum Graph language server proxy
+
+Install both binaries into a directory on your PATH, then run:
+  nex demo
+
+Docs and releases:
+https://github.com/NexumCorpus/Nexum-Graph

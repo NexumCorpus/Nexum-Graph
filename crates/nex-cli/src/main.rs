@@ -7,8 +7,8 @@
 use clap::Parser;
 use nex_cli::cli::{AuditCommands, AuthCommands, Cli, Commands};
 use nex_cli::{
-    audit_pipeline, auth_pipeline, coordination_pipeline, demo_pipeline, eventlog_pipeline, output,
-    serve_pipeline,
+    audit_pipeline, auth_pipeline, check_pipeline, coordination_pipeline, demo_pipeline,
+    eventlog_pipeline, output, serve_pipeline, start_pipeline,
 };
 
 #[tokio::main]
@@ -25,6 +25,24 @@ async fn main() {
             match demo_pipeline::run_demo(repo, &base, &head).await {
                 Ok(report) => {
                     let out = output::format_demo_report(&report, &format);
+                    println!("{out}");
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::Start {
+            base,
+            head,
+            repo_path,
+            format,
+        } => {
+            let repo = repo_path.as_deref().unwrap_or(std::path::Path::new("."));
+            match start_pipeline::run_start(repo, &base, &head).await {
+                Ok(report) => {
+                    let out = output::format_start_report(&report, &format);
                     println!("{out}");
                 }
                 Err(e) => {
@@ -57,19 +75,42 @@ async fn main() {
             branch_b,
             repo_path,
             format,
+            install_hook,
+            force,
         } => {
             let repo = repo_path.as_deref().unwrap_or(std::path::Path::new("."));
 
-            match nex_coord::ConflictDetector::detect(repo, &branch_a, &branch_b) {
-                Ok(report) => {
-                    let exit = report.exit_code();
-                    let out = output::format_report(&report, &format);
-                    println!("{out}");
-                    std::process::exit(exit);
+            if install_hook {
+                match check_pipeline::install_check_hook(repo, force) {
+                    Ok(result) => {
+                        let out = output::format_check_hook_install_result(&result, &format);
+                        println!("{out}");
+                    }
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        std::process::exit(1);
+                    }
                 }
-                Err(e) => {
-                    eprintln!("error: {e}");
+            } else {
+                let (Some(branch_a), Some(branch_b)) = (branch_a.as_deref(), branch_b.as_deref())
+                else {
+                    eprintln!(
+                        "error: `nex check` requires <branch-a> and <branch-b>, or --install-hook"
+                    );
                     std::process::exit(1);
+                };
+
+                match check_pipeline::run_check(repo, branch_a, branch_b) {
+                    Ok(report) => {
+                        let exit = report.exit_code();
+                        let out = output::format_report(&report, &format);
+                        println!("{out}");
+                        std::process::exit(exit);
+                    }
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        std::process::exit(1);
+                    }
                 }
             }
         }

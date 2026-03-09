@@ -9,7 +9,9 @@ use crate::audit_pipeline::AuditVerificationReport;
 use crate::auth_pipeline::{
     AuthConfigMode, AuthInitResult, AuthIssueResult, AuthRevokeResult, AuthStatus,
 };
+use crate::check_pipeline::{CheckHookInstallResult, CheckHookInstallStatus};
 use crate::demo_pipeline::DemoReport;
+use crate::start_pipeline::{StartReport, StartStepStatus};
 use nex_core::{ChangeKind, ConflictKind, ConflictReport, SemanticDiff, Severity};
 use std::fmt::Write;
 
@@ -82,6 +84,104 @@ pub fn format_demo_report(report: &DemoReport, format: &str) -> String {
             let _ = writeln!(output, "Next:");
             let _ = writeln!(output, "  nex diff {} {}", report.base_ref, report.head_ref);
             let _ = writeln!(output, "  nex serve --host 127.0.0.1 --port 4000");
+            output
+        }
+    }
+}
+
+pub fn format_start_report(report: &StartReport, format: &str) -> String {
+    match format {
+        "json" => serde_json::to_string_pretty(report)
+            .unwrap_or_else(|err| format!("{{\"error\": \"{err}\"}}")),
+        _ => {
+            let mut output = String::new();
+            let _ = writeln!(output, "Nexum Graph Start");
+            let _ = writeln!(output, "=================");
+            let _ = writeln!(output, "Repo: {}", report.repo_path.display());
+            let _ = writeln!(
+                output,
+                "Languages: {}",
+                if report.demo.detected_languages.is_empty() {
+                    "none".to_string()
+                } else {
+                    report.demo.detected_languages.join(", ")
+                }
+            );
+            let _ = writeln!(output, "Indexed files: {}", report.demo.indexed_files);
+            let _ = writeln!(output, "Semantic units: {}", report.demo.semantic_units);
+            let _ = writeln!(output, "Dependency edges: {}", report.demo.dependency_edges);
+            let _ = writeln!(
+                output,
+                "Current diff preview: {}",
+                if report.demo.current_diff.available {
+                    format!(
+                        "ready ({} added, {} modified, {} removed, {} moved)",
+                        report.demo.current_diff.added,
+                        report.demo.current_diff.modified,
+                        report.demo.current_diff.removed,
+                        report.demo.current_diff.moved
+                    )
+                } else {
+                    "unavailable".to_string()
+                }
+            );
+            let _ = writeln!(
+                output,
+                "Merge guard: {} ({})",
+                if report.hook_installed {
+                    if report.hook_healthy {
+                        "installed"
+                    } else {
+                        "custom hook present"
+                    }
+                } else {
+                    "not installed"
+                },
+                report.hook_path.display()
+            );
+            let _ = writeln!(
+                output,
+                "Server auth: {}",
+                if report.auth_configured {
+                    "configured"
+                } else {
+                    "not configured"
+                }
+            );
+
+            let _ = writeln!(output);
+            let _ = writeln!(output, "Next steps");
+            let _ = writeln!(output, "----------");
+            for (index, step) in report.next_steps.iter().enumerate() {
+                let _ = writeln!(
+                    output,
+                    "{}. [{}] {}",
+                    index + 1,
+                    start_step_status_label(step.status),
+                    step.title
+                );
+                let _ = writeln!(output, "   {}", step.reason);
+                let _ = writeln!(output, "   {}", step.command);
+            }
+
+            if !report.demo.current_diff.highlights.is_empty() {
+                let _ = writeln!(output);
+                let _ = writeln!(output, "Snapshot highlights");
+                let _ = writeln!(output, "-----------------");
+                for highlight in &report.demo.current_diff.highlights {
+                    let _ = writeln!(output, "  {highlight}");
+                }
+            }
+
+            if !report.demo.warnings.is_empty() {
+                let _ = writeln!(output);
+                let _ = writeln!(output, "Warnings");
+                let _ = writeln!(output, "--------");
+                for warning in &report.demo.warnings {
+                    let _ = writeln!(output, "  - {warning}");
+                }
+            }
+
             output
         }
     }
@@ -350,6 +450,36 @@ fn format_report_github(report: &ConflictReport) -> String {
     }
 
     output
+}
+
+pub fn format_check_hook_install_result(result: &CheckHookInstallResult, format: &str) -> String {
+    match format {
+        "json" => serde_json::to_string_pretty(result)
+            .unwrap_or_else(|err| format!("{{\"error\": \"{err}\"}}")),
+        _ => {
+            let mut output = String::new();
+            let _ = writeln!(output, "Semantic check hook");
+            let _ = writeln!(output, "===================");
+            let _ = writeln!(output, "Hook: {}", result.hook_name);
+            let _ = writeln!(output, "Path: {}", result.hook_path.display());
+            let _ = writeln!(output, "Status: {}", check_hook_status_label(result.status));
+            let _ = writeln!(
+                output,
+                "Hooks path: {}",
+                if result.uses_custom_hooks_path {
+                    "custom"
+                } else {
+                    "default"
+                }
+            );
+            let _ = writeln!(output);
+            let _ = writeln!(
+                output,
+                "This hook runs `nex check HEAD MERGE_HEAD` before merge commit."
+            );
+            output
+        }
+    }
 }
 
 fn severity_label(severity: Severity) -> &'static str {
@@ -841,4 +971,20 @@ fn pluralize(label: &str, count: usize) -> &str {
 
 fn yes_no(value: bool) -> &'static str {
     if value { "yes" } else { "no" }
+}
+
+fn check_hook_status_label(status: CheckHookInstallStatus) -> &'static str {
+    match status {
+        CheckHookInstallStatus::Installed => "installed",
+        CheckHookInstallStatus::Updated => "updated",
+        CheckHookInstallStatus::Unchanged => "already current",
+    }
+}
+
+fn start_step_status_label(status: StartStepStatus) -> &'static str {
+    match status {
+        StartStepStatus::Recommended => "recommended",
+        StartStepStatus::Ready => "ready",
+        StartStepStatus::Complete => "complete",
+    }
 }

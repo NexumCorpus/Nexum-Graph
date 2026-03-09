@@ -7,18 +7,39 @@ Nexum Graph turns a codebase into a semantic graph, coordinates multiple agents 
 This repository is the full product codebase:
 
 - 8 Rust crates in one workspace
-- 13 CLI commands
+- 14 CLI commands
+- Guided first run via `nex start`
 - TypeScript, Python, and Rust semantic extraction
 - Semantic diff, coordination, validation, event log, HTTP server, and LSP integration
 - hundreds of automated tests across Rust and Python
 
-Start here:
+## ⚡ Install in one step
+
+### macOS / Linux
 
 ```bash
-cargo run -p nex-cli -- demo
+curl -fsSL https://raw.githubusercontent.com/NexumCorpus/Nexum-Graph/main/install.sh | sh
 ```
 
-That gives you a semantic snapshot of the repo in one command.
+### Windows PowerShell
+
+```powershell
+irm https://raw.githubusercontent.com/NexumCorpus/Nexum-Graph/main/install.ps1 | iex
+```
+
+Then run:
+
+```bash
+nex start
+```
+
+That gives you a guided first run with a semantic snapshot, recommended next commands, merge-hook status, and the shortest path to live coordination.
+
+Release assets ship:
+
+- `nex` and `nex-lsp` bundled for Linux, macOS, and Windows
+- a packaged VS Code extension `.vsix`
+- `SHA256SUMS.txt` for integrity verification
 
 ## ⚡ What You Get
 
@@ -52,9 +73,12 @@ In practice, that means a few almost-miraculous benefits:
 
 ## 🚀 What You Can Do Today
 
+- Start from zero with `nex start`.
 - Get an immediate semantic snapshot of a repo with `nex demo`.
 - Compute semantic diffs between refs with `nex diff`.
 - Detect merge-risk conflicts between branches with `nex check`.
+- Install a local semantic merge gate with `nex check --install-hook`.
+- Gate pull requests in GitHub Actions with `uses: NexumCorpus/Nexum-Graph@v0.1.0`.
 - Acquire semantic locks on specific units with `nex lock`.
 - Validate lock coverage before commit with `nex validate`.
 - Run a local coordination server with `nex serve`.
@@ -64,24 +88,24 @@ In practice, that means a few almost-miraculous benefits:
 
 ## 🚀 Quickstart
 
-### 1. Clone and build
+### 1. Install Nexum Graph
+
+macOS / Linux:
 
 ```bash
-git clone https://github.com/NexumCorpus/Nexum-Graph.git
-cd Nexum-Graph
-cargo build --release
+curl -fsSL https://raw.githubusercontent.com/NexumCorpus/Nexum-Graph/main/install.sh | sh
 ```
 
-If you want the helper tools as well:
+Windows PowerShell:
 
-```bash
-python -m unittest discover -s tools -p "test_*.py"
+```powershell
+irm https://raw.githubusercontent.com/NexumCorpus/Nexum-Graph/main/install.ps1 | iex
 ```
 
 ### 2. Prove the product in one command
 
 ```bash
-cargo run -p nex-cli -- demo
+nex start
 ```
 
 You will immediately see:
@@ -90,8 +114,9 @@ You will immediately see:
 - 🧩 indexed files, semantic units, and dependency edges
 - 🔄 the current `HEAD~1 -> HEAD` semantic diff
 - 🔐 current lock, event-log, and auth state
+- 🪜 the next exact commands to run
 
-Once built, you can replace `cargo run -p nex-cli --` with the installed `nex` binary.
+If you prefer to build from source instead, jump to `I want to build everything from source` below.
 
 ### 3. Take the next step when you want more
 
@@ -109,21 +134,18 @@ What those do:
 
 ### 4. Add the editor experience
 
-```bash
-cd extensions/vscode
-npm install
-npm run compile
-npm run package
-```
-
-Then install the generated `.vsix` from VS Code with `Extensions: Install from VSIX...`.
+1. Download `nexum-graph-vscode-X.Y.Z.vsix` from the latest [GitHub Release](https://github.com/NexumCorpus/Nexum-Graph/releases).
+2. In VS Code, open Extensions.
+3. Select `...`.
+4. Choose `Install from VSIX...`.
+5. Pick the downloaded `.vsix`.
 
 ## 🧭 Choose Your Path
 
 ### I just want proof this is real
 
 ```bash
-nex demo
+nex start
 ```
 
 ### I want to inspect a real change
@@ -136,6 +158,7 @@ nex diff HEAD~1 HEAD
 
 ```bash
 nex check feature/a feature/b
+nex check --install-hook
 ```
 
 ### I want to run it as coordination infrastructure
@@ -145,12 +168,23 @@ nex auth init --agent alice --agent bob
 nex serve --host 127.0.0.1 --port 4000
 ```
 
+### I want to build everything from source
+
+```bash
+git clone https://github.com/NexumCorpus/Nexum-Graph.git
+cd Nexum-Graph
+cargo build --release
+npm --prefix extensions/vscode ci
+npm --prefix extensions/vscode run package
+```
+
 ## 🛠️ Product Surface
 
 ### CLI commands
 
 | Command | Purpose |
 |---|---|
+| `nex start` | Guided first run with next-step recommendations |
 | `nex demo` | One-command semantic snapshot of the current repository |
 | `nex diff` | Semantic diff between two git refs |
 | `nex check` | Conflict detection between two branches |
@@ -179,7 +213,7 @@ It also proxies standard LSP requests to an upstream server and merges Nexum Gra
 
 ### VS Code extension
 
-The repo now includes a source-distributed VS Code extension in [extensions/vscode](./extensions/vscode). It:
+The repo now includes a release-packaged VS Code extension plus the source under [extensions/vscode](./extensions/vscode). It:
 
 - auto-starts `nex-lsp` for TypeScript, Python, and Rust workspaces
 - supports per-language upstream server configuration
@@ -237,7 +271,30 @@ nex diff v0.1.0 HEAD --format json
 
 ```bash
 nex check feature/a feature/b
+nex check --install-hook
 ```
+
+`nex check --install-hook` installs a `pre-merge-commit` git hook for the current repo. On local merges, Git will run `nex check HEAD MERGE_HEAD` before the merge commit is created.
+
+### GitHub pull request gate
+
+```yaml
+name: Semantic Check
+
+on:
+  pull_request:
+
+jobs:
+  semantic-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: NexumCorpus/Nexum-Graph@v0.1.0
+```
+
+The published action installs the matching release build, resolves the pull request base/head refs automatically, runs `nex check`, and writes the report into the GitHub Actions job summary.
 
 ### Locking and validation
 
@@ -261,6 +318,15 @@ nex audit verify
 nex demo
 nex demo --base origin/main --head HEAD
 ```
+
+### Guided first run
+
+```bash
+nex start
+nex start --base origin/main --head HEAD
+```
+
+`nex start` is the hand-hold path for new users. It shows the current repo snapshot, tells you whether the semantic merge hook is installed, tells you whether auth is configured, and prints the next exact commands to run.
 
 ## 🔐 Security and Operations
 
@@ -291,6 +357,8 @@ For repo security policy and reporting guidance, see [SECURITY.md](./SECURITY.md
 
 The repo includes a small toolchain for spec-driven, slice-based development:
 
+- `tools/release_tools.py`
+  Validates version parity, packages release bundles, and writes checksum manifests.
 - `tools/spec_query.py`
   Searches the `.docx` implementation spec and whitepaper files.
 - `tools/verify_slice.py`
@@ -305,6 +373,7 @@ The repo includes a small toolchain for spec-driven, slice-based development:
 Typical workflow:
 
 ```bash
+python tools/release_tools.py assert-version-parity --tag v0.1.0
 python tools/verify_slice.py --changed
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
@@ -313,6 +382,8 @@ npm --prefix extensions/vscode test
 ```
 
 If you plan to contribute, start with [CONTRIBUTING.md](./CONTRIBUTING.md).
+If you plan to cut releases, use [RELEASING.md](./RELEASING.md).
+If you want the public-facing update log, use [NEWS.md](./NEWS.md).
 
 ## 📈 Project Status
 

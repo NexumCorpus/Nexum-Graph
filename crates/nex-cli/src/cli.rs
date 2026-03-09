@@ -28,6 +28,21 @@ pub enum Commands {
         #[arg(long, default_value = "text")]
         format: String,
     },
+    /// Guided first run with recommended next steps.
+    Start {
+        /// Base git ref used for the current semantic diff preview.
+        #[arg(long, default_value = "HEAD~1")]
+        base: String,
+        /// Head git ref used for the current semantic diff preview.
+        #[arg(long, default_value = "HEAD")]
+        head: String,
+        /// Path to the git repository (defaults to ".").
+        #[arg(long)]
+        repo_path: Option<PathBuf>,
+        /// Output format: json or text.
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
     /// Compute semantic diff between two git refs.
     Diff {
         /// Base git ref (commit, branch, tag).
@@ -44,15 +59,23 @@ pub enum Commands {
     /// Check for semantic conflicts between two branches (three-way merge analysis).
     Check {
         /// First branch ref.
-        branch_a: String,
+        #[arg(required_unless_present = "install_hook")]
+        branch_a: Option<String>,
         /// Second branch ref.
-        branch_b: String,
+        #[arg(required_unless_present = "install_hook")]
+        branch_b: Option<String>,
         /// Path to the git repository (defaults to ".").
         #[arg(long)]
         repo_path: Option<PathBuf>,
         /// Output format: json, text, or github.
         #[arg(long, default_value = "text")]
         format: String,
+        /// Install a local git pre-merge hook that runs `nex check`.
+        #[arg(long, default_value_t = false)]
+        install_hook: bool,
+        /// Replace an existing hook if one is already installed.
+        #[arg(long, default_value_t = false, requires = "install_hook")]
+        force: bool,
     },
     /// Request a semantic lock on a code unit.
     Lock {

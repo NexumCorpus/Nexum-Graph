@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 TOOLS = [
+    "tools/release_tools.py",
     "tools/spec_query.py",
     "tools/sync_codex_skills.py",
     "tools/test_skill_sync.py",

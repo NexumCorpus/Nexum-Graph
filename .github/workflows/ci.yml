@@ -1,0 +1,177 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version-parity:
+    name: Version parity
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate release version parity
+        run: python tools/release_tools.py assert-version-parity --json
+
+  rust:
+    name: Rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-13
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run workspace tests
+        run: cargo test --workspace --locked
+
+      - name: Run Clippy
+        if: runner.os == 'Linux'
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Check formatting
+        if: runner.os == 'Linux'
+        run: cargo fmt --check
+
+  vscode:
+    name: VS Code extension
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: extensions/vscode/package-lock.json
+
+      - name: Install extension dependencies
+        run: npm ci --prefix extensions/vscode
+
+      - name: Test extension
+        run: npm --prefix extensions/vscode test
+
+      - name: Build VSIX
+        run: npm --prefix extensions/vscode run package
+
+  installer-smoke:
+    name: Installer smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            shell_kind: unix
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            shell_kind: windows
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Resolve release version
+        shell: bash
+        run: echo "RELEASE_VERSION=$(python tools/release_tools.py assert-version-parity)" >> "$GITHUB_ENV"
+
+      - name: Build bundled binaries
+        run: |
+          cargo build --release --locked -p nex-cli --bin nex --target ${{ matrix.target }}
+          cargo build --release --locked -p nex-lsp --bin nex-lsp --target ${{ matrix.target }}
+
+      - name: Create local release fixture
+        shell: bash
+        run: |
+          mkdir -p release-fixtures/download/v${RELEASE_VERSION} release-fixtures/api/releases
+          python tools/release_tools.py package-bundle \
+            --version ${RELEASE_VERSION} \
+            --target ${{ matrix.target }} \
+            --source-dir target/${{ matrix.target }}/release \
+            --output-dir release-fixtures/download/v${RELEASE_VERSION}
+          python tools/release_tools.py write-checksums \
+            --output release-fixtures/download/v${RELEASE_VERSION}/SHA256SUMS.txt \
+            release-fixtures/download/v${RELEASE_VERSION}/*
+          python - <<'PY'
+          import os
+          import json
+          from pathlib import Path
+          Path("release-fixtures/api/releases/latest.json").write_text(
+              json.dumps({"tag_name": f"v{os.environ['RELEASE_VERSION']}"}),
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Smoke test install.sh
+        if: matrix.shell_kind == 'unix'
+        shell: bash
+        run: |
+          python -m http.server 8765 --directory release-fixtures >server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          sleep 2
+          NEXUM_GRAPH_RELEASE_BASE_URL=http://127.0.0.1:8765 \
+          NEXUM_GRAPH_API_URL=http://127.0.0.1:8765/api/releases/latest.json \
+            bash ./install.sh --install-dir "$PWD/.smoke/bin" --force
+          test -f "$PWD/.smoke/bin/nex"
+          test -f "$PWD/.smoke/bin/nex-lsp"
+
+      - name: Smoke test install.ps1
+        if: matrix.shell_kind == 'windows'
+        shell: pwsh
+        run: |
+          $server = Start-Process python -ArgumentList "-m", "http.server", "8765", "--directory", "release-fixtures" -PassThru
+          try {
+            Start-Sleep -Seconds 2
+            $env:NEXUM_GRAPH_RELEASE_BASE_URL = "http://127.0.0.1:8765"
+            $env:NEXUM_GRAPH_API_URL = "http://127.0.0.1:8765/api/releases/latest.json"
+            .\install.ps1 -InstallDir "$pwd\.smoke\bin" -Force
+            if (-not (Test-Path "$pwd\.smoke\bin\nex.exe")) { throw "nex.exe was not installed" }
+            if (-not (Test-Path "$pwd\.smoke\bin\nex-lsp.exe")) { throw "nex-lsp.exe was not installed" }
+          }
+          finally {
+            Stop-Process -Id $server.Id -Force
+          }

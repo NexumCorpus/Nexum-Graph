@@ -1,0 +1,50 @@
+name: Semantic Check
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  semantic-check:
+    name: nex check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build nex CLI
+        run: cargo build --locked -p nex-cli --bin nex
+
+      - name: Run semantic conflict check
+        shell: bash
+        run: |
+          set -euo pipefail
+          report_file="$RUNNER_TEMP/nex-check-report.md"
+          set +e
+          cargo run --locked -p nex-cli --bin nex -- \
+            check "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" \
+            --repo-path . \
+            --format github > "$report_file" 2>&1
+          status=$?
+          set -e
+
+          cat "$report_file"
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            printf '## nex check\n\n' >> "$GITHUB_STEP_SUMMARY"
+            cat "$report_file" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          exit "$status"

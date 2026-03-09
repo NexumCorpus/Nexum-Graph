@@ -1,0 +1,200 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing git tag in vX.Y.Z form"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  prepare:
+    name: Prepare release metadata
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Resolve release tag
+        id: meta
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.meta.outputs.tag }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate version parity
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(python tools/release_tools.py assert-version-parity --tag "${{ steps.meta.outputs.tag }}")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+  build-bundles:
+    name: Bundle ${{ matrix.target }}
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: macos-13
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build nex
+        run: cargo build --release --locked -p nex-cli --bin nex --target ${{ matrix.target }}
+
+      - name: Build nex-lsp
+        run: cargo build --release --locked -p nex-lsp --bin nex-lsp --target ${{ matrix.target }}
+
+      - name: Package release bundle
+        shell: bash
+        run: |
+          python tools/release_tools.py package-bundle \
+            --version ${{ needs.prepare.outputs.version }} \
+            --target ${{ matrix.target }} \
+            --source-dir target/${{ matrix.target }}/release \
+            --output-dir release-assets
+
+      - name: Upload bundled asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundle-${{ matrix.target }}
+          path: release-assets/*
+
+  build-vscode:
+    name: Build VS Code extension
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: extensions/vscode/package-lock.json
+
+      - name: Install extension dependencies
+        run: npm ci --prefix extensions/vscode
+
+      - name: Test extension
+        run: npm --prefix extensions/vscode test
+
+      - name: Build VSIX
+        run: npm --prefix extensions/vscode run package
+
+      - name: Upload VSIX asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: vscode-extension
+          path: extensions/vscode/*.vsix
+
+  publish:
+    name: Publish GitHub release
+    needs:
+      - prepare
+      - build-bundles
+      - build-vscode
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download bundled assets
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Flatten artifacts
+        shell: bash
+        run: |
+          mkdir -p release-assets/flat
+          find release-assets -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.vsix' \) -exec cp {} release-assets/flat/ \;
+
+      - name: Validate asset names
+        shell: bash
+        run: |
+          python tools/release_tools.py print-manifest --tag "${{ needs.prepare.outputs.tag }}" --json > release-assets/expected.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          expected = json.loads(Path("release-assets/expected.json").read_text(encoding="utf-8"))
+          actual = sorted(path.name for path in Path("release-assets/flat").iterdir() if path.is_file())
+          wanted = sorted(expected["bundles"] + [expected["vscode_asset"]])
+          if actual != wanted:
+              raise SystemExit(f"asset name mismatch:\nexpected={wanted}\nactual={actual}")
+          PY
+
+      - name: Write SHA256SUMS.txt
+        shell: bash
+        run: |
+          python tools/release_tools.py write-checksums \
+            --output release-assets/flat/SHA256SUMS.txt \
+            release-assets/flat/*
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          files: release-assets/flat/*
+          generate_release_notes: true
