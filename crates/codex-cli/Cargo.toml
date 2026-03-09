@@ -5,6 +5,10 @@ edition = "2024"
 publish = false
 description = "CLI binary for Project Codex (codex diff, codex check, codex serve)"
 
+[lib]
+name = "codex_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "codex"
 path = "src/main.rs"

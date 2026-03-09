@@ -260,7 +260,11 @@ fn diff_body_changed_only() {
     let diff = before.diff(&after);
     assert_eq!(diff.modified.len(), 1);
     assert!(diff.modified[0].changes.contains(&ChangeKind::BodyChanged));
-    assert!(!diff.modified[0].changes.contains(&ChangeKind::SignatureChanged));
+    assert!(
+        !diff.modified[0]
+            .changes
+            .contains(&ChangeKind::SignatureChanged)
+    );
 }
 
 #[test]
@@ -274,7 +278,11 @@ fn diff_signature_changed() {
 
     let diff = before.diff(&after);
     assert_eq!(diff.modified.len(), 1);
-    assert!(diff.modified[0].changes.contains(&ChangeKind::SignatureChanged));
+    assert!(
+        diff.modified[0]
+            .changes
+            .contains(&ChangeKind::SignatureChanged)
+    );
 }
 
 #[test]
@@ -288,7 +296,11 @@ fn diff_both_signature_and_body_changed() {
 
     let diff = before.diff(&after);
     assert_eq!(diff.modified.len(), 1);
-    assert!(diff.modified[0].changes.contains(&ChangeKind::SignatureChanged));
+    assert!(
+        diff.modified[0]
+            .changes
+            .contains(&ChangeKind::SignatureChanged)
+    );
     assert!(diff.modified[0].changes.contains(&ChangeKind::BodyChanged));
 }
 
