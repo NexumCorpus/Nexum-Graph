@@ -7,11 +7,13 @@
 pub mod conflict;
 pub mod coordination;
 pub mod error;
+pub mod persistence;
 pub mod semantic;
 pub mod validation;
 
 pub use conflict::*;
 pub use coordination::*;
 pub use error::*;
+pub use persistence::*;
 pub use semantic::*;
 pub use validation::*;

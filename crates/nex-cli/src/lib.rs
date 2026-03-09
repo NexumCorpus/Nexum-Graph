@@ -1,5 +1,7 @@
 //! nex-cli library: exposes pipeline, output, coordination, and CLI types for integration tests.
 
+pub mod audit_pipeline;
+pub mod auth_pipeline;
 pub mod cli;
 pub mod coordination_pipeline;
 pub mod eventlog_pipeline;

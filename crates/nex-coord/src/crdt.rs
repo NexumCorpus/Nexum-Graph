@@ -11,7 +11,10 @@
 use crate::protocol::IntentPayload;
 use chrono::{DateTime, Utc};
 use loro::{ExportMode, LoroDoc, ToJson};
-use nex_core::{AgentId, CodexError, CodexResult, IntentKind, SemanticId};
+use nex_core::{
+    AgentId, CodexError, CodexResult, IntentKind, SemanticId, atomic_write_bytes, backup_path,
+    load_bytes_with_backup,
+};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::collections::HashMap;
 use std::path::Path;
@@ -86,22 +89,27 @@ impl CoordinationDocument {
 
     /// Load a coordination document from disk, or create an empty one.
     pub fn load_from_path(path: &Path, peer_id: u64) -> CodexResult<Self> {
-        if !path.exists() {
+        let Some(bytes) = load_bytes_with_backup(path)? else {
             return Self::new(peer_id);
-        }
+        };
 
-        let bytes = std::fs::read(path)?;
-        Self::from_bytes(peer_id, &bytes)
+        match Self::from_bytes(peer_id, &bytes) {
+            Ok(document) => Ok(document),
+            Err(primary_err) => {
+                let backup = backup_path(path);
+                if backup.exists() {
+                    let backup_bytes = std::fs::read(&backup)?;
+                    Self::from_bytes(peer_id, &backup_bytes).or(Err(primary_err))
+                } else {
+                    Err(primary_err)
+                }
+            }
+        }
     }
 
     /// Persist the current CRDT document to disk.
     pub fn save_to_path(&self, path: &Path) -> CodexResult<()> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        std::fs::write(path, self.export_bytes()?)?;
-        Ok(())
+        atomic_write_bytes(path, &self.export_bytes()?)
     }
 
     /// Merge remote updates into the local document.

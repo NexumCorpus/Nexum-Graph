@@ -1,13 +1,19 @@
 use chrono::Utc;
 use futures_util::StreamExt;
-use nex_cli::serve_pipeline::{AbortRequest, CommitRequest, spawn_server};
+use nex_cli::auth_pipeline::init_auth_config;
+use nex_cli::serve_pipeline::{
+    AbortRequest, CommitRequest, ServeSecurity, spawn_server, spawn_server_with_options,
+};
 use nex_coord::{CoordEvent, IntentPayload, IntentResult, LockEntry, PlannedChange};
 use nex_core::SemanticUnit;
 use nex_eventlog::{Mutation, SemanticEvent};
+use serde_json::Value;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::time::Duration;
 use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::error::Error as WsError;
 use uuid::Uuid;
 
 fn init_temp_repo() -> (tempfile::TempDir, git2::Repository) {
@@ -74,6 +80,34 @@ fn declare_payload(unit: &SemanticUnit) -> IntentPayload {
         estimated_changes: vec![PlannedChange::ModifyBody { unit: unit.id }],
         ttl: Duration::from_secs(30),
     }
+}
+
+fn bearer_request(url: &str, token: &str) -> tokio_tungstenite::tungstenite::http::Request<()> {
+    let mut request = url.into_client_request().expect("build ws request");
+    request.headers_mut().insert(
+        "Authorization",
+        format!("Bearer {token}").parse().expect("auth header"),
+    );
+    request
+}
+
+fn write_auth_config(path: &Path, body: serde_json::Value) {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).expect("create auth config dir");
+    }
+    std::fs::write(
+        path,
+        serde_json::to_vec_pretty(&body).expect("serialize auth config"),
+    )
+    .expect("write auth config");
+}
+
+fn read_audit_log(path: &Path) -> Vec<Value> {
+    std::fs::read_to_string(path)
+        .expect("read audit log")
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("parse audit record"))
+        .collect()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -279,6 +313,443 @@ async fn serve_streams_coordination_events_over_websocket() {
         }
         other => panic!("expected intent declared event, got {other:?}"),
     }
+
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn serve_rejects_remote_bind_without_auth() {
+    let (_dir, repo) = setup_repo();
+    let repo_path = repo.workdir().unwrap().to_path_buf();
+
+    let error = match spawn_server_with_options(
+        &repo_path,
+        "0.0.0.0:0".parse::<SocketAddr>().unwrap(),
+        ServeSecurity::default(),
+    )
+    .await
+    {
+        Ok(handle) => {
+            handle.shutdown().await;
+            panic!("remote bind without auth should fail");
+        }
+        Err(error) => error,
+    };
+
+    assert!(
+        error
+            .to_string()
+            .contains("refusing to bind nex serve to non-loopback address"),
+        "unexpected error: {error}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn serve_requires_bearer_token_for_http_routes() {
+    let (_dir, repo) = setup_repo();
+    let repo_path = repo.workdir().unwrap().to_path_buf();
+    let server = spawn_server_with_options(
+        &repo_path,
+        "127.0.0.1:0".parse::<SocketAddr>().unwrap(),
+        ServeSecurity::bearer_token("topsecret"),
+    )
+    .await
+    .unwrap();
+    let base = format!("http://{}", server.local_addr());
+    let client = reqwest::Client::new();
+
+    let unauthorized = client.get(format!("{base}/locks")).send().await.unwrap();
+    assert_eq!(unauthorized.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+    let authorized = client
+        .get(format!("{base}/locks"))
+        .bearer_auth("topsecret")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(authorized.status(), reqwest::StatusCode::OK);
+
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn serve_requires_bearer_token_for_websocket_stream() {
+    let (_dir, repo) = setup_repo();
+    let repo_path = repo.workdir().unwrap().to_path_buf();
+    let server = spawn_server_with_options(
+        &repo_path,
+        "127.0.0.1:0".parse::<SocketAddr>().unwrap(),
+        ServeSecurity::bearer_token("topsecret"),
+    )
+    .await
+    .unwrap();
+    let http_base = format!("http://{}", server.local_addr());
+    let ws_base = format!("ws://{}/events", server.local_addr());
+    let client = reqwest::Client::new();
+
+    let unauthorized = connect_async(&ws_base)
+        .await
+        .expect_err("ws should require auth");
+    match unauthorized {
+        WsError::Http(response) => assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED),
+        other => panic!("expected unauthorized websocket response, got {other:?}"),
+    }
+
+    let (mut socket, _) = connect_async(bearer_request(&ws_base, "topsecret"))
+        .await
+        .unwrap();
+
+    let validate: Vec<SemanticUnit> = client
+        .get(format!("{http_base}/graph/query"))
+        .bearer_auth("topsecret")
+        .query(&[("kind", "units_named"), ("value", "validate")])
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let declare = declare_payload(&validate[0]);
+    let result: IntentResult = client
+        .post(format!("{http_base}/intent/declare"))
+        .bearer_auth("topsecret")
+        .json(&declare)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(matches!(result, IntentResult::Approved { .. }));
+
+    let message = tokio::time::timeout(Duration::from_secs(5), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let text = message.into_text().unwrap();
+    let event: CoordEvent = serde_json::from_str(&text).unwrap();
+    match event {
+        CoordEvent::IntentDeclared { intent_id, .. } => assert_eq!(intent_id, declare.id),
+        other => panic!("expected intent declared event, got {other:?}"),
+    }
+
+    let _ = socket.close(None).await;
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn serve_agent_tokens_reject_mismatched_declared_agent() {
+    let (_dir, repo) = setup_repo();
+    let repo_path = repo.workdir().unwrap().to_path_buf();
+    let server = spawn_server_with_options(
+        &repo_path,
+        "127.0.0.1:0".parse::<SocketAddr>().unwrap(),
+        ServeSecurity::agent_tokens([("alice", "alice-secret"), ("bob", "bob-secret")]).unwrap(),
+    )
+    .await
+    .unwrap();
+    let base = format!("http://{}", server.local_addr());
+    let client = reqwest::Client::new();
+
+    let validate: Vec<SemanticUnit> = client
+        .get(format!("{base}/graph/query"))
+        .bearer_auth("alice-secret")
+        .query(&[("kind", "units_named"), ("value", "validate")])
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let mut declare = declare_payload(&validate[0]);
+    declare.agent_id = "mallory".to_string();
+
+    let response = client
+        .post(format!("{base}/intent/declare"))
+        .bearer_auth("alice-secret")
+        .json(&declare)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::FORBIDDEN);
+
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn serve_agent_tokens_prevent_cross_agent_commit() {
+    let (_dir, repo) = setup_repo();
+    let repo_path = repo.workdir().unwrap().to_path_buf();
+    let server = spawn_server_with_options(
+        &repo_path,
+        "127.0.0.1:0".parse::<SocketAddr>().unwrap(),
+        ServeSecurity::agent_tokens([("alice", "alice-secret"), ("bob", "bob-secret")]).unwrap(),
+    )
+    .await
+    .unwrap();
+    let base = format!("http://{}", server.local_addr());
+    let client = reqwest::Client::new();
+
+    let process_request: Vec<SemanticUnit> = client
+        .get(format!("{base}/graph/query"))
+        .bearer_auth("alice-secret")
+        .query(&[("kind", "units_named"), ("value", "processRequest")])
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let declare = declare_payload(&process_request[0]);
+    let declare_result: IntentResult = client
+        .post(format!("{base}/intent/declare"))
+        .bearer_auth("alice-secret")
+        .json(&declare)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let lock_token = match declare_result {
+        IntentResult::Approved { lock_token, .. } => lock_token,
+        other => panic!("expected approval, got {other:?}"),
+    };
+
+    let response = client
+        .post(format!("{base}/intent/commit"))
+        .bearer_auth("bob-secret")
+        .json(&CommitRequest {
+            intent_id: declare.id,
+            lock_token,
+            description: Some("bob should not commit".to_string()),
+            mutations: Vec::new(),
+            parent_event: None,
+            tags: Vec::new(),
+        })
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::FORBIDDEN);
+
+    let locks: Vec<LockEntry> = client
+        .get(format!("{base}/locks"))
+        .bearer_auth("alice-secret")
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(locks.len(), 1);
+    assert_eq!(locks[0].holder, "alice");
+
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn serve_auto_discovers_repo_auth_config() {
+    let (_dir, repo) = setup_repo();
+    let repo_path = repo.workdir().unwrap().to_path_buf();
+    let auth_path = repo_path.join(".nex").join("server-auth.json");
+    write_auth_config(
+        &auth_path,
+        serde_json::json!({
+            "agent_tokens": {
+                "alice": ["alice-secret"]
+            }
+        }),
+    );
+
+    let security = ServeSecurity::resolve_for_repo(&repo_path, None, Vec::new(), None, false)
+        .expect("resolve repo auth config");
+    let server = spawn_server_with_options(
+        &repo_path,
+        "127.0.0.1:0".parse::<SocketAddr>().unwrap(),
+        security,
+    )
+    .await
+    .unwrap();
+    let base = format!("http://{}", server.local_addr());
+    let client = reqwest::Client::new();
+
+    let unauthorized = client.get(format!("{base}/locks")).send().await.unwrap();
+    assert_eq!(unauthorized.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+    let authorized = client
+        .get(format!("{base}/locks"))
+        .bearer_auth("alice-secret")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(authorized.status(), reqwest::StatusCode::OK);
+
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn serve_accepts_hash_only_auth_config_written_by_cli() {
+    let (_dir, repo) = setup_repo();
+    let repo_path = repo.workdir().unwrap().to_path_buf();
+    let init = init_auth_config(&repo_path, None, &["alice".to_string()], false, false)
+        .expect("init hashed auth config");
+    let token = init.issued[0].token.clone();
+    let auth_body = std::fs::read_to_string(repo_path.join(".nex").join("server-auth.json"))
+        .expect("read hashed auth config");
+    assert!(!auth_body.contains(&token));
+
+    let security = ServeSecurity::resolve_for_repo(&repo_path, None, Vec::new(), None, false)
+        .expect("resolve hashed auth config");
+    let server = spawn_server_with_options(
+        &repo_path,
+        "127.0.0.1:0".parse::<SocketAddr>().unwrap(),
+        security,
+    )
+    .await
+    .unwrap();
+    let base = format!("http://{}", server.local_addr());
+    let client = reqwest::Client::new();
+
+    let authorized = client
+        .get(format!("{base}/locks"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(authorized.status(), reqwest::StatusCode::OK);
+
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn serve_reloadable_auth_config_rotates_tokens_without_restart() {
+    let (_dir, repo) = setup_repo();
+    let repo_path = repo.workdir().unwrap().to_path_buf();
+    let auth_path = repo_path.join(".nex").join("server-auth.json");
+    write_auth_config(
+        &auth_path,
+        serde_json::json!({
+            "agent_tokens": {
+                "alice": ["alice-old"]
+            }
+        }),
+    );
+
+    let server = spawn_server_with_options(
+        &repo_path,
+        "127.0.0.1:0".parse::<SocketAddr>().unwrap(),
+        ServeSecurity::auth_config(&auth_path),
+    )
+    .await
+    .unwrap();
+    let base = format!("http://{}", server.local_addr());
+    let client = reqwest::Client::new();
+
+    let old_ok = client
+        .get(format!("{base}/locks"))
+        .bearer_auth("alice-old")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(old_ok.status(), reqwest::StatusCode::OK);
+
+    write_auth_config(
+        &auth_path,
+        serde_json::json!({
+            "agent_tokens": {
+                "alice": ["alice-new"]
+            },
+            "revoked_tokens": ["alice-old"]
+        }),
+    );
+
+    let old_denied = client
+        .get(format!("{base}/locks"))
+        .bearer_auth("alice-old")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(old_denied.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+    let new_ok = client
+        .get(format!("{base}/locks"))
+        .bearer_auth("alice-new")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(new_ok.status(), reqwest::StatusCode::OK);
+
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn serve_writes_append_only_audit_log_for_auth_sensitive_actions() {
+    let (_dir, repo) = setup_repo();
+    let repo_path = repo.workdir().unwrap().to_path_buf();
+    let server = spawn_server_with_options(
+        &repo_path,
+        "127.0.0.1:0".parse::<SocketAddr>().unwrap(),
+        ServeSecurity::agent_tokens([("alice", "alice-secret")]).unwrap(),
+    )
+    .await
+    .unwrap();
+    let base = format!("http://{}", server.local_addr());
+    let client = reqwest::Client::new();
+
+    let unauthorized = client.get(format!("{base}/locks")).send().await.unwrap();
+    assert_eq!(unauthorized.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+    let validate: Vec<SemanticUnit> = client
+        .get(format!("{base}/graph/query"))
+        .bearer_auth("alice-secret")
+        .query(&[("kind", "units_named"), ("value", "validate")])
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let declare = declare_payload(&validate[0]);
+    let response = client
+        .post(format!("{base}/intent/declare"))
+        .bearer_auth("alice-secret")
+        .json(&declare)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+
+    let audit_log = read_audit_log(&repo_path.join(".nex").join("server-audit.jsonl"));
+    assert!(audit_log.len() >= 2);
+    assert!(audit_log.iter().any(|record| {
+        record.get("action") == Some(&Value::String("auth".to_string()))
+            && record.get("outcome") == Some(&Value::String("unauthorized".to_string()))
+            && record.get("path") == Some(&Value::String("/locks".to_string()))
+    }));
+    assert!(audit_log.iter().any(|record| {
+        record.get("action") == Some(&Value::String("intent_declare".to_string()))
+            && record.get("outcome") == Some(&Value::String("approved".to_string()))
+            && record.get("claimed_agent") == Some(&Value::String("alice".to_string()))
+    }));
 
     server.shutdown().await;
 }

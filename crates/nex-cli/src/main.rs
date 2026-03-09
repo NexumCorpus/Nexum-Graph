@@ -5,8 +5,10 @@
 // Phase 3: `nex log`, `nex rollback`
 
 use clap::Parser;
-use nex_cli::cli::{Cli, Commands};
-use nex_cli::{coordination_pipeline, eventlog_pipeline, output, serve_pipeline};
+use nex_cli::cli::{AuditCommands, AuthCommands, Cli, Commands};
+use nex_cli::{
+    audit_pipeline, auth_pipeline, coordination_pipeline, eventlog_pipeline, output, serve_pipeline,
+};
 
 #[tokio::main]
 async fn main() {
@@ -187,14 +189,140 @@ async fn main() {
         Commands::Serve {
             host,
             port,
+            auth_token,
+            agent_tokens,
+            auth_config,
+            allow_insecure_remote,
             repo_path,
         } => {
             let repo = repo_path.as_deref().unwrap_or(std::path::Path::new("."));
 
-            if let Err(e) = serve_pipeline::run_serve(repo, &host, port).await {
+            if let Err(e) = serve_pipeline::run_serve(
+                repo,
+                &host,
+                port,
+                auth_token,
+                agent_tokens,
+                auth_config,
+                allow_insecure_remote,
+            )
+            .await
+            {
                 eprintln!("error: {e}");
                 std::process::exit(1);
             }
         }
+        Commands::Auth { command } => match command {
+            AuthCommands::Init {
+                agents,
+                shared,
+                force,
+                repo_path,
+                auth_config,
+                format,
+            } => {
+                let repo = repo_path.as_deref().unwrap_or(std::path::Path::new("."));
+                match auth_pipeline::init_auth_config(repo, auth_config, &agents, shared, force) {
+                    Ok(result) => {
+                        let out = output::format_auth_init_result(&result, &format);
+                        println!("{out}");
+                    }
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        std::process::exit(1);
+                    }
+                }
+            }
+            AuthCommands::Issue {
+                agent_name,
+                shared,
+                repo_path,
+                auth_config,
+                format,
+            } => {
+                let repo = repo_path.as_deref().unwrap_or(std::path::Path::new("."));
+                let target = match (shared, agent_name) {
+                    (true, None) => auth_pipeline::AuthIssueTarget::Shared,
+                    (false, Some(agent_name)) => auth_pipeline::AuthIssueTarget::Agent(agent_name),
+                    (true, Some(_)) => {
+                        eprintln!(
+                            "error: use either `nex auth issue --shared` or `nex auth issue <agent>`"
+                        );
+                        std::process::exit(1);
+                    }
+                    (false, None) => {
+                        eprintln!("error: `nex auth issue` requires an agent name or --shared");
+                        std::process::exit(1);
+                    }
+                };
+
+                match auth_pipeline::issue_auth_token(repo, auth_config, target) {
+                    Ok(result) => {
+                        let out = output::format_auth_issue_result(&result, &format);
+                        println!("{out}");
+                    }
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        std::process::exit(1);
+                    }
+                }
+            }
+            AuthCommands::Revoke {
+                token,
+                repo_path,
+                auth_config,
+                format,
+            } => {
+                let repo = repo_path.as_deref().unwrap_or(std::path::Path::new("."));
+                match auth_pipeline::revoke_auth_token(repo, auth_config, &token) {
+                    Ok(result) => {
+                        let out = output::format_auth_revoke_result(&result, &format);
+                        println!("{out}");
+                    }
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        std::process::exit(1);
+                    }
+                }
+            }
+            AuthCommands::Status {
+                repo_path,
+                auth_config,
+                format,
+            } => {
+                let repo = repo_path.as_deref().unwrap_or(std::path::Path::new("."));
+                match auth_pipeline::auth_status(repo, auth_config) {
+                    Ok(result) => {
+                        let out = output::format_auth_status(&result, &format);
+                        println!("{out}");
+                    }
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        std::process::exit(1);
+                    }
+                }
+            }
+        },
+        Commands::Audit { command } => match command {
+            AuditCommands::Verify {
+                repo_path,
+                audit_log,
+                format,
+            } => {
+                let repo = repo_path.as_deref().unwrap_or(std::path::Path::new("."));
+                match audit_pipeline::verify_audit_log(repo, audit_log) {
+                    Ok(report) => {
+                        let exit = report.exit_code();
+                        let out = output::format_audit_verification_report(&report, &format);
+                        println!("{out}");
+                        std::process::exit(exit);
+                    }
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        std::process::exit(1);
+                    }
+                }
+            }
+        },
     }
 }

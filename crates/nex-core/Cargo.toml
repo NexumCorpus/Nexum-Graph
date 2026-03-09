@@ -9,4 +9,5 @@ description = "Shared types, errors, and configuration for Nexum Graph"
 serde = { workspace = true }
 serde_json = { workspace = true }
 blake3 = { workspace = true }
+tempfile = "3"
 thiserror = { workspace = true }

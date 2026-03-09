@@ -1,5 +1,5 @@
 use chrono::{TimeZone, Utc};
-use nex_core::{SemanticUnit, UnitKind};
+use nex_core::{SemanticUnit, UnitKind, backup_path};
 use nex_eventlog::{EventLog, Mutation, SemanticEvent};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -366,4 +366,30 @@ async fn rollback_reports_conflict_when_later_event_touches_same_unit() {
         2,
         "conflicting rollback must not append an event"
     );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn list_recovers_from_backup_when_primary_json_is_invalid() {
+    let path = temp_log_path();
+    let log = EventLog::new(path.clone());
+    let intent_id = Uuid::new_v4();
+    let unit = make_unit("validate", "handler.ts", 10);
+    let saved = vec![event(
+        Uuid::new_v4(),
+        intent_id,
+        10,
+        "restored from backup",
+        vec![Mutation::AddUnit { unit: unit.clone() }],
+    )];
+
+    std::fs::write(&path, "{invalid json").expect("write corrupt primary");
+    std::fs::write(
+        backup_path(&path),
+        serde_json::to_string_pretty(&saved).expect("serialize backup"),
+    )
+    .expect("write backup");
+
+    let loaded = log.list().await.expect("list events");
+    assert_eq!(loaded.len(), 1);
+    assert_eq!(loaded[0].description, "restored from backup");
 }

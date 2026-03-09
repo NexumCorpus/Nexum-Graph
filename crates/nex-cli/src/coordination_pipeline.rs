@@ -8,7 +8,10 @@
 //! 4. Delegate to CoordinationEngine for lock operations
 
 use nex_coord::{CoordinationDocument, CoordinationEngine};
-use nex_core::{AgentId, CodexError, CodexResult, IntentKind, LockResult, SemanticUnit};
+use nex_core::{
+    AgentId, CodexError, CodexResult, IntentKind, LockResult, SemanticUnit, atomic_write_json,
+    load_json_with_backup,
+};
 use nex_graph::CodeGraph;
 use std::path::Path;
 
@@ -72,13 +75,7 @@ pub fn load_locks(repo_path: &Path) -> CodexResult<Vec<LockEntry>> {
         }
     }
 
-    if !lock_path.exists() {
-        return Ok(Vec::new());
-    }
-
-    let content = std::fs::read_to_string(&lock_path)?;
-    let entries: Vec<LockEntry> = serde_json::from_str(&content)?;
-    Ok(entries)
+    Ok(load_json_with_backup(&lock_path)?.unwrap_or_default())
 }
 
 /// Save lock entries to `.nex/locks.json`.
@@ -99,9 +96,7 @@ pub fn save_locks(repo_path: &Path, entries: &[LockEntry]) -> CodexResult<()> {
     document.replace_lock_entries(entries)?;
     document.save_to_path(&crdt_path)?;
 
-    let content = serde_json::to_string_pretty(entries)?;
-    std::fs::write(nex_dir.join(LOCKS_JSON_FILE), content)?;
-    Ok(())
+    atomic_write_json(&nex_dir.join(LOCKS_JSON_FILE), entries)
 }
 
 /// Build a `CodeGraph` from HEAD of the git repository.

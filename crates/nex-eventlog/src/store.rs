@@ -1,6 +1,8 @@
 use crate::event::SemanticEvent;
 use chrono::Utc;
-use nex_core::{CodexError, CodexResult, SemanticId, SemanticUnit};
+use nex_core::{
+    CodexError, CodexResult, SemanticId, SemanticUnit, atomic_write_json, load_json_with_backup,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -304,21 +306,11 @@ async fn ensure_stream(
 }
 
 fn load_events_from_path(path: &Path) -> CodexResult<Vec<SemanticEvent>> {
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-
-    let content = std::fs::read_to_string(path)?;
-    Ok(serde_json::from_str(&content)?)
+    Ok(load_json_with_backup(path)?.unwrap_or_default())
 }
 
 fn save_events_to_path(path: &Path, events: &[SemanticEvent]) -> CodexResult<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let content = serde_json::to_string_pretty(events)?;
-    std::fs::write(path, content)?;
-    Ok(())
+    atomic_write_json(path, &events)
 }
 
 fn touched_units(events: &[SemanticEvent]) -> Vec<SemanticId> {

@@ -281,6 +281,13 @@ impl CoordinationService {
         locks
     }
 
+    /// Resolve the declared owner of an active intent, if it exists.
+    pub fn intent_owner(&self, intent_id: Uuid) -> Option<&str> {
+        self.intents
+            .get(&intent_id)
+            .map(|intent| intent.payload.agent_id.as_str())
+    }
+
     /// Expire stale intents and release their locks.
     pub fn expire_stale(&mut self) -> Vec<ExpiredIntent> {
         let now = Utc::now();

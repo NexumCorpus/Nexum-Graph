@@ -13,7 +13,7 @@ use nex_cli::coordination_pipeline::{
     LockEntry, agent_name_to_id, load_locks, parse_intent_kind, run_lock, run_locks, run_unlock,
     save_locks,
 };
-use nex_core::{IntentKind, LockResult};
+use nex_core::{IntentKind, LockResult, backup_path};
 use std::path::Path;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -153,6 +153,32 @@ fn save_and_load_round_trip() {
     assert_eq!(loaded[0].agent_name, "alice");
     assert_eq!(loaded[0].target_name, "processRequest");
     assert_eq!(loaded[0].agent_id, id);
+}
+
+#[test]
+fn load_locks_recovers_from_backup_when_primary_json_is_invalid() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let nex_dir = dir.path().join(".nex");
+    std::fs::create_dir_all(&nex_dir).expect("create .nex dir");
+
+    let entries = vec![LockEntry {
+        agent_name: "alice".to_string(),
+        agent_id: agent_name_to_id("alice"),
+        target_name: "processRequest".to_string(),
+        target: [7u8; 32],
+        kind: IntentKind::Write,
+    }];
+    let path = nex_dir.join("locks.json");
+
+    std::fs::write(&path, "{bad json").expect("write corrupt primary");
+    std::fs::write(
+        backup_path(&path),
+        serde_json::to_string_pretty(&entries).expect("serialize backup"),
+    )
+    .expect("write backup");
+
+    let loaded = load_locks(dir.path()).expect("load locks");
+    assert_eq!(loaded, entries);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

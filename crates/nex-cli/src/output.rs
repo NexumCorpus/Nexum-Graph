@@ -5,6 +5,10 @@
 //! - `text`: Human-readable summary
 //! - `github`: GitHub-flavored markdown for PR comments
 
+use crate::audit_pipeline::AuditVerificationReport;
+use crate::auth_pipeline::{
+    AuthConfigMode, AuthInitResult, AuthIssueResult, AuthRevokeResult, AuthStatus,
+};
 use nex_core::{ChangeKind, ConflictKind, ConflictReport, SemanticDiff, Severity};
 use std::fmt::Write;
 
@@ -574,4 +578,192 @@ pub fn format_replay_state(units: &[SemanticUnit], format: &str) -> String {
             output
         }
     }
+}
+
+pub fn format_auth_init_result(result: &AuthInitResult, format: &str) -> String {
+    match format {
+        "json" => serde_json::to_string_pretty(result)
+            .unwrap_or_else(|err| format!("{{\"error\": \"{err}\"}}")),
+        _ => {
+            let mut output = String::new();
+            let _ = writeln!(output, "Auth config initialized: {}", result.path.display());
+            let _ = writeln!(output, "Mode: {}", auth_mode_label(result.mode));
+            let _ = writeln!(output, "Storage: hash-at-rest");
+            if result.replaced_existing {
+                let _ = writeln!(output, "Replaced existing config: yes");
+            }
+            let _ = writeln!(output, "Issued tokens:");
+            for issued in &result.issued {
+                match &issued.agent_name {
+                    Some(agent_name) => {
+                        let _ = writeln!(output, "  {}: {}", agent_name, issued.token);
+                    }
+                    None => {
+                        let _ = writeln!(output, "  shared: {}", issued.token);
+                    }
+                }
+            }
+            let _ = writeln!(output, "Raw tokens are shown only once.");
+            output
+        }
+    }
+}
+
+pub fn format_auth_issue_result(result: &AuthIssueResult, format: &str) -> String {
+    match format {
+        "json" => serde_json::to_string_pretty(result)
+            .unwrap_or_else(|err| format!("{{\"error\": \"{err}\"}}")),
+        _ => {
+            let mut output = String::new();
+            match &result.issued.agent_name {
+                Some(agent_name) => {
+                    let _ = writeln!(output, "Issued agent token for {agent_name}");
+                }
+                None => {
+                    let _ = writeln!(output, "Issued shared bearer token");
+                }
+            }
+            let _ = writeln!(output, "Path: {}", result.path.display());
+            let _ = writeln!(output, "Mode: {}", auth_mode_label(result.mode));
+            let _ = writeln!(output, "Storage: hash-at-rest");
+            let _ = writeln!(output, "Token: {}", result.issued.token);
+            let _ = writeln!(output, "Active tokens: {}", result.active_token_count);
+            let _ = writeln!(output, "Revoked tokens: {}", result.revoked_token_count);
+            let _ = writeln!(output, "Raw token is shown only once.");
+            output
+        }
+    }
+}
+
+pub fn format_auth_revoke_result(result: &AuthRevokeResult, format: &str) -> String {
+    match format {
+        "json" => serde_json::to_string_pretty(result)
+            .unwrap_or_else(|err| format!("{{\"error\": \"{err}\"}}")),
+        _ => {
+            let mut output = String::new();
+            if result.removed {
+                let _ = writeln!(output, "Revoked token: {}", result.token);
+            } else {
+                let _ = writeln!(output, "Token already revoked: {}", result.token);
+            }
+            let _ = writeln!(output, "Path: {}", result.path.display());
+            let _ = writeln!(output, "Mode: {}", auth_mode_label(result.mode));
+            let _ = writeln!(output, "Storage: hash-at-rest");
+            if let Some(agent_name) = &result.affected_agent {
+                let _ = writeln!(output, "Affected agent: {agent_name}");
+            }
+            let _ = writeln!(output, "Active tokens: {}", result.active_token_count);
+            let _ = writeln!(output, "Revoked tokens: {}", result.revoked_token_count);
+            output
+        }
+    }
+}
+
+pub fn format_auth_status(status: &AuthStatus, format: &str) -> String {
+    match format {
+        "json" => serde_json::to_string_pretty(status)
+            .unwrap_or_else(|err| format!("{{\"error\": \"{err}\"}}")),
+        _ => {
+            let mut output = String::new();
+            let _ = writeln!(output, "Auth config: {}", status.path.display());
+            let _ = writeln!(
+                output,
+                "Status: {}",
+                if status.exists {
+                    "configured"
+                } else {
+                    "not configured"
+                }
+            );
+            if status.using_backup {
+                let _ = writeln!(output, "Source: backup");
+            }
+            let _ = writeln!(output, "Mode: {}", auth_mode_label(status.mode));
+            let _ = writeln!(output, "Storage: hash-at-rest");
+            let _ = writeln!(output, "Shared tokens: {}", status.shared_token_count);
+            let _ = writeln!(output, "Revoked tokens: {}", status.revoked_token_count);
+            let _ = writeln!(output, "Agents: {}", status.agents.len());
+            for agent in &status.agents {
+                let _ = writeln!(
+                    output,
+                    "  {}: {} {}",
+                    agent.agent_name,
+                    agent.active_tokens,
+                    pluralize("active token", agent.active_tokens)
+                );
+            }
+            output
+        }
+    }
+}
+
+pub fn format_audit_verification_report(report: &AuditVerificationReport, format: &str) -> String {
+    match format {
+        "json" => serde_json::to_string_pretty(report)
+            .unwrap_or_else(|err| format!("{{\"error\": \"{err}\"}}")),
+        _ => {
+            let mut output = String::new();
+            let _ = writeln!(output, "Audit Verification");
+            let _ = writeln!(output, "==================");
+            let _ = writeln!(output, "Log: {}", report.log_path.display());
+            let _ = writeln!(output, "Head: {}", report.head_path.display());
+            let _ = writeln!(
+                output,
+                "Status: {}",
+                if report.valid { "VALID" } else { "INVALID" }
+            );
+            let _ = writeln!(output, "Anchored: {}", yes_no(report.anchored));
+            let _ = writeln!(output, "Records: {}", report.record_count);
+            if let Some(last_hash) = &report.last_hash {
+                let _ = writeln!(output, "Last hash: {last_hash}");
+            }
+            if report.issues.is_empty() {
+                let _ = writeln!(output);
+                let _ = writeln!(output, "No integrity issues detected.");
+            } else {
+                let _ = writeln!(output);
+                let _ = writeln!(output, "Issues:");
+                for issue in &report.issues {
+                    match issue.line {
+                        Some(line) => {
+                            let _ = writeln!(
+                                output,
+                                "  - [{}] line {}: {}",
+                                issue.kind, line, issue.description
+                            );
+                        }
+                        None => {
+                            let _ = writeln!(output, "  - [{}] {}", issue.kind, issue.description);
+                        }
+                    }
+                }
+                let _ = writeln!(output);
+                let _ = writeln!(output, "Exit code: {}", report.exit_code());
+            }
+            output
+        }
+    }
+}
+
+fn auth_mode_label(mode: AuthConfigMode) -> &'static str {
+    match mode {
+        AuthConfigMode::Disabled => "disabled",
+        AuthConfigMode::Shared => "shared",
+        AuthConfigMode::Agent => "per-agent",
+    }
+}
+
+fn pluralize(label: &str, count: usize) -> &str {
+    if count == 1 {
+        label
+    } else {
+        match label {
+            "active token" => "active tokens",
+            _ => label,
+        }
+    }
+}
+
+fn yes_no(value: bool) -> &'static str {
+    if value { "yes" } else { "no" }
 }

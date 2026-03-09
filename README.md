@@ -1,55 +1,45 @@
 # Nexum Graph
 
-**AI-native code coordination for multi-agent software engineering.**
+AI-native code coordination for multi-agent software engineering.
 
-Nexum Graph is a deterministic coordination layer that enables multiple AI coding agents to work on the same codebase without corrupting each other's changes. It parses code into a semantic graph, provides intent-based locking with CRDT-backed distributed convergence, validates changes against lock ownership, and maintains an async event log for rollback and replay.
+Nexum Graph turns a codebase into a semantic graph, coordinates multiple agents against that graph, validates whether changes respect declared intent, records those changes in an event log, and exposes the system over both CLI and LSP surfaces.
 
-Zero lines of Rust were written by a human. Claude wrote the types, tests, and prompts. OpenAI Codex filled in every function body.
+This repository is the full product codebase:
 
-## Architecture
+- 8 Rust crates in one workspace
+- 12 CLI commands
+- TypeScript, Python, and Rust semantic extraction
+- Semantic diff, coordination, validation, event log, HTTP server, and LSP integration
+- 230+ automated tests across Rust and Python
 
-Five-layer deterministic chassis:
+## Why This Exists
 
-```
- Layer 1 ─ Semantic Code Graph    tree-sitter CST → petgraph DiGraph
- Layer 2 ─ Intent Coordination    semantic locking, CRDT sync, conflict detection
- Layer 3 ─ Continuous Validation  pre-commit lock coverage checks
- Layer 4 ─ Immutable Event Log    async append-only log, rollback, replay
- Layer 5 ─ IDE Integration        LSP shim + HTTP coordination server
-```
+Most AI coding tools still coordinate at the file or patch level. That breaks down when multiple agents touch the same repo at once.
 
-## Workspace
+Nexum Graph coordinates at the semantic unit level instead:
 
-8 crates in a Cargo workspace:
+- Functions, methods, classes, traits, and other code units are first-class entities.
+- Dependencies between those entities are explicit.
+- Agents declare intent before writing.
+- Validation checks whether the resulting changes were actually authorized.
+- The system leaves behind an auditable trail instead of a pile of opaque patches.
 
-| Crate | Purpose |
-|---|---|
-| `nex-core` | Authoritative types (`SemanticUnit`, `SemanticId`, `SemanticDiff`, `DepKind`) |
-| `nex-parse` | Tree-sitter extraction, `SemanticExtractor` trait, TypeScript + Python + Rust extractors |
-| `nex-graph` | `petgraph` semantic graph, diff algorithm |
-| `nex-coord` | Conflict detection, coordination engine, intent lifecycle, Loro CRDT replica sync |
-| `nex-validate` | Pre-commit validation (lock coverage, broken references, stale callers) |
-| `nex-eventlog` | Async event log with pluggable backends (local-file default, JetStream opt-in) |
-| `nex-lsp` | `tower-lsp` proxy with semantic diff, lock annotations, event streaming |
-| `nex-cli` | CLI binary with 10 subcommands |
+The result is a foundation for multi-agent coding systems that need stronger guarantees than "hope the diffs merge."
 
-## Supported Languages
+## What You Can Do Today
 
-| Language | Extractor | Constructs |
-|---|---|---|
-| TypeScript / TSX | `nex-parse::typescript` | Functions, classes, methods, interfaces, enums, type aliases |
-| Python | `nex-parse::python` | Functions, classes, methods, decorators, async variants |
-| Rust | `nex-parse::rust` | Functions, structs, enums, traits, impl methods, inline modules |
+- Compute semantic diffs between refs with `nex diff`.
+- Detect merge-risk conflicts between branches with `nex check`.
+- Acquire semantic locks on specific units with `nex lock`.
+- Validate lock coverage before commit with `nex validate`.
+- Run a local coordination server with `nex serve`.
+- Bootstrap secure remote access with `nex auth`.
+- Verify the tamper-evident audit trail with `nex audit verify`.
+- Stream coordination signals into editors through `nex-lsp`.
 
-## Installation
+## Quickstart
 
-### Prerequisites
-
-- Rust 1.85+ (edition 2024)
-- Git (for repository operations)
-- Python 3.10+ (optional, for developer tools)
-
-### Build from source
+### 1. Clone and build
 
 ```bash
 git clone https://github.com/NexumCorpus/Nexum-Graph.git
@@ -57,239 +47,226 @@ cd Nexum-Graph
 cargo build --release
 ```
 
-The binary is at `target/release/nex` (or `target/release/nex.exe` on Windows).
-
-### Verify
+If you want the helper tools as well:
 
 ```bash
-cargo test --workspace
+python -m unittest discover -s tools -p "test_*.py"
 ```
 
-All 186 Rust tests should pass. Run `python -m unittest discover -s tools -p "test_*.py"` for the 21 Python tool tests.
+### 2. Get value in under five minutes
 
-## Commands
-
-### `nex diff` — Semantic diff between two git refs
+Run a semantic diff:
 
 ```bash
-nex diff v1 v2 --format text
-nex diff main feature-branch --format json
+cargo run -p nex-cli -- diff HEAD~1 HEAD
 ```
 
-Computes a semantic diff showing added, removed, and modified code units (functions, classes, methods) between two git refs. Understands signature vs body-only changes.
-
-### `nex check` — Conflict detection between branches
+Bootstrap secure server auth:
 
 ```bash
-nex check branch-a branch-b
-nex check feature-1 feature-2 --format json
+cargo run -p nex-cli -- auth init --agent alice --agent bob
 ```
 
-Three-way merge analysis that detects four conflict types:
-- **Concurrent Modification** — same function modified on both branches
-- **Signature Drift** — function signature changed, callers may break
-- **Broken Reference** — dependency target deleted or moved
-- **Stale Caller** — caller body unchanged but callee signature changed
+Start the coordination server:
 
-### `nex lock` — Acquire a semantic lock
+```bash
+cargo run -p nex-cli -- serve --host 127.0.0.1 --port 4000
+```
+
+Verify the audit trail:
+
+```bash
+cargo run -p nex-cli -- audit verify
+```
+
+Once built, you can replace `cargo run -p nex-cli --` with the installed `nex` binary.
+
+## Product Surface
+
+### CLI commands
+
+| Command | Purpose |
+|---|---|
+| `nex diff` | Semantic diff between two git refs |
+| `nex check` | Conflict detection between two branches |
+| `nex lock` | Acquire a semantic lock |
+| `nex unlock` | Release a semantic lock |
+| `nex locks` | List active locks |
+| `nex validate` | Validate lock coverage against a base ref |
+| `nex log` | Show semantic event history |
+| `nex rollback` | Generate a rollback event |
+| `nex replay` | Replay semantic state to an event boundary |
+| `nex auth` | Bootstrap and manage server auth |
+| `nex audit verify` | Verify the tamper-evident audit trail |
+| `nex serve` | Start the coordination server |
+
+### LSP surface
+
+The `nex-lsp` binary provides editor integration with:
+
+- `nex/semanticDiff`
+- `nex/activeLocks`
+- `nex/agentIntent`
+- `nex/validationStatus`
+- `nex/eventStream`
+
+It also proxies standard LSP requests to an upstream server and merges Nexum Graph overlays into the editor experience.
+
+## Architecture
+
+Nexum Graph is built as a five-layer chassis:
+
+1. Semantic Code Graph
+   Parses source into semantic units and dependency edges.
+2. Intent Coordination
+   Declares intent, grants locks, detects conflicts, and converges distributed state with CRDTs.
+3. Continuous Validation
+   Checks whether modifications and deletions are covered by locks and flags broken references.
+4. Immutable Event Log
+   Records semantic mutations for replay and rollback.
+5. IDE and Server Integration
+   Exposes the system through CLI, HTTP, WebSocket, and LSP surfaces.
+
+### Workspace map
+
+| Crate | Purpose |
+|---|---|
+| `nex-core` | Shared contracts, types, errors, persistence helpers |
+| `nex-parse` | Tree-sitter extraction and language-specific semantic extractors |
+| `nex-graph` | Semantic graph construction and graph diffing |
+| `nex-coord` | Coordination engine, conflict detection, service layer, CRDT state |
+| `nex-validate` | Lock coverage and semantic validation rules |
+| `nex-eventlog` | Event storage, replay, rollback, backend abstraction |
+| `nex-lsp` | Editor integration and upstream LSP proxy |
+| `nex-cli` | CLI, server, auth, audit, and operator workflows |
+
+## Supported Languages
+
+| Language | Current extractor coverage |
+|---|---|
+| TypeScript / TSX | Functions, classes, methods, interfaces, enums, type aliases |
+| Python | Functions, classes, methods, decorators, async variants |
+| Rust | Functions, structs, enums, traits, impl methods, inline modules |
+
+The extractor trait is intentionally extensible, so more languages can be added without changing the rest of the chassis.
+
+## Core Workflows
+
+### Semantic diff
+
+```bash
+nex diff main feature/refactor --format text
+nex diff v0.1.0 HEAD --format json
+```
+
+### Conflict detection
+
+```bash
+nex check feature/a feature/b
+```
+
+### Locking and validation
 
 ```bash
 nex lock alice validate write
-nex lock bob processRequest read
-```
-
-Requests a semantic lock on a named code unit. Lock kinds: `read`, `write`, `delete`. Multiple read locks are compatible; write and delete locks are exclusive. Lock state is persisted to `.nex/coordination.loro` (CRDT) with a `.nex/locks.json` compatibility snapshot.
-
-### `nex unlock` — Release a semantic lock
-
-```bash
+nex validate alice --base HEAD~1
 nex unlock alice validate
 ```
 
-### `nex locks` — List active locks
+### Secure server bootstrap
 
 ```bash
-nex locks
-nex locks --format json
+nex auth init --agent alice --agent bob
+nex serve --host 0.0.0.0 --port 4000
+nex audit verify
 ```
 
-### `nex validate` — Check lock coverage
+## Security and Operations
 
-```bash
-nex validate alice --base HEAD~1
-nex validate bob --base main --format json
-```
+Nexum Graph now includes operator-oriented hardening out of the box:
 
-Validates that all modifications in the working tree are covered by semantic locks held by the named agent. Reports unlocked modifications, unlocked deletions, broken references, and stale callers.
+- Remote binds are rejected unless auth is configured or explicitly bypassed.
+- Repo-local auth config stores BLAKE3 token hashes at rest, not raw bearer secrets.
+- Raw auth tokens are only shown once at issue time.
+- Server audit records are hash chained and anchored by `.nex/server-audit.head.json`.
+- `nex audit verify` detects record edits, missing anchors, and tail truncation.
+- Existing plaintext auth configs are still readable for migration compatibility.
 
-### `nex log` — Event history
-
-```bash
-nex log
-nex log --intent-id <uuid> --format json
-```
-
-Shows the semantic event log. The default backend writes to `.nex/events.json`; set `NEX_EVENTLOG_BACKEND=jetstream` to publish events into a NATS JetStream stream instead.
-
-### `nex rollback` — Semantic rollback
-
-```bash
-nex rollback <intent-id> alice
-```
-
-Generates compensating mutations that reverse a prior intent's changes. Detects conflicts if later events modified the same units.
-
-### `nex replay` — Replay state to a point in time
-
-```bash
-nex replay --to <event-id>
-```
-
-Applies all mutations in order up to the specified event, producing the semantic state at that point.
-
-### `nex serve` — Coordination server
-
-```bash
-nex serve --host 127.0.0.1 --port 4000
-```
-
-Starts an HTTP + WebSocket coordination server exposing:
-- `POST /intent/declare` — declare intent with automatic lock acquisition
-- `POST /intent/commit` — commit intent, append to event log, release locks
-- `POST /intent/abort` — abort intent, release locks
-- `GET /graph/query` — query the semantic graph
-- `GET /locks` — list active locks
-- `GET /events` — WebSocket stream of coordination events
-
-## LSP Server
-
-The `nex-lsp` binary provides IDE integration via the Language Server Protocol:
-
-```bash
-nex-lsp --repo-path . --base-ref HEAD~1
-```
-
-Custom LSP methods:
-- `nex/semanticDiff` — file-scoped semantic diff
-- `nex/activeLocks` — lock annotations as code lenses
-- `nex/agentIntent` — intent declaration from IDE actions
-- `nex/validationStatus` — real-time validation diagnostics
-- `nex/eventStream` — semantic event notifications
-
-The LSP also supports upstream proxy pass-through, forwarding standard LSP requests to an existing language server while injecting Nexum Graph overlays.
-
-## Developer Tools
-
-Python-based tools for spec-driven development workflows:
-
-### `tools/spec_query.py` — Search implementation specs
-
-```bash
-python tools/spec_query.py locking --doc spec
-python tools/spec_query.py "CRDT coordination" --mode phrase --stats
-python tools/spec_query.py "semantic.*lock" --mode regex --max-results 5 --json
-```
-
-Extracts text from `.docx` spec documents and searches with configurable modes (`all`, `any`, `phrase`, `regex`). Caches extracted text with mtime-based invalidation.
-
-### `tools/verify_slice.py` — Targeted workspace verification
-
-```bash
-python tools/verify_slice.py --crate nex-coord
-python tools/verify_slice.py --changed
-python tools/verify_slice.py --since origin/main --json
-python tools/verify_slice.py --list-crates
-```
-
-Derives the workspace dependency DAG from live `cargo metadata`, infers impacted crates from changed files, expands transitive dependents, and runs `cargo test` + `cargo clippy` + `cargo fmt --check` for the affected crate set.
-
-### `tools/workspace_doctor.py` — Workspace health check
-
-```bash
-python tools/workspace_doctor.py
-python tools/workspace_doctor.py --legacy-scan --json
-```
-
-Checks toolchain availability, spec document presence, repo-managed and installed skill status, skill sync drift detection, dirty-tree impact analysis, and optional legacy-name scanning.
-
-### `tools/sync_codex_skills.py` — Skill lifecycle manager
-
-```bash
-python tools/sync_codex_skills.py              # install / refresh all repo skills
-python tools/sync_codex_skills.py --check       # detect drift without writing
-python tools/sync_codex_skills.py --list        # list repo-managed skill names
-python tools/sync_codex_skills.py --check --json
-```
-
-Manages the lifecycle of Codex skills stored in `codex-skills/`. Compares repo-canonical copies against installed copies under `$CODEX_HOME/skills/` using deep file comparison (`filecmp.cmp`), reports missing/extra/changed files, and syncs on demand.
-
-### `tools/tool_selftest.py` — Regression runner
-
-```bash
-python tools/tool_selftest.py
-python tools/tool_selftest.py --skip-skills --json
-```
-
-Orchestrates `py_compile`, `unittest` discovery, `sync_codex_skills --check`, `workspace_doctor`, and optional local skill validation as a single CI-like pass. Use after changing any repo tool or skill.
-
-## Configuration
-
-### Environment Variables
-
-| Variable | Default | Description |
-|---|---|---|
-| `NEX_EVENTLOG_BACKEND` | `local-file` | Event log backend (`local-file` or `jetstream`) |
-| `NEX_NATS_URL` | `nats://127.0.0.1:4222` | NATS server URL (JetStream backend) |
-| `NEX_EVENTLOG_STREAM` | `nex_events` | JetStream stream name prefix |
-| `NEX_EVENTLOG_SUBJECT_PREFIX` | `nex.events` | NATS subject prefix |
-| `NEX_COORD_PEER_ID` | Auto-derived | CRDT peer ID override (default: BLAKE3 hash of hostname + repo path) |
-
-### State Directory
-
-Nexum Graph stores local state in `.nex/` at the repository root:
+State lives under `.nex/`:
 
 | File | Purpose |
 |---|---|
-| `coordination.loro` | CRDT document for distributed lock convergence |
-| `locks.json` | Backward-compatible JSON lock snapshot |
-| `events.json` | Local event log (when using `local-file` backend) |
-| `cache/` | Tool caches (spec text extraction) |
+| `coordination.loro` | CRDT coordination state |
+| `locks.json` | Compatibility snapshot of active locks |
+| `events.json` | Local event log when using the file backend |
+| `server-auth.json` | Reloadable auth config with token hashes at rest |
+| `server-audit.jsonl` | Hash-chained server audit trail |
+| `server-audit.head.json` | Audit head anchor for integrity verification |
+| `cache/` | Local tool caches |
 
-## How It Works
+For repo security policy and reporting guidance, see [SECURITY.md](./SECURITY.md).
 
-1. **Parse**: Tree-sitter parses source files into concrete syntax trees. The `SemanticExtractor` trait maps CST nodes to `SemanticUnit` values with content-addressed IDs (BLAKE3), signature hashes, and normalized body hashes.
+## Developer Workflow
 
-2. **Graph**: Units and their dependency edges (calls, imports, inheritance, implementations) form a `petgraph` directed graph. Diffing two graphs produces added/removed/modified classifications.
+The repo includes a small toolchain for spec-driven, slice-based development:
 
-3. **Coordinate**: Agents declare intents targeting specific units. The coordination engine acquires semantic locks, checks for conflicts with existing lock holders, and manages intent lifecycles (declare -> commit/abort) with TTL-based expiry. CRDT-backed state enables distributed replica convergence via `export_crdt` / `merge_crdt`.
+- `tools/spec_query.py`
+  Searches the `.docx` implementation spec and whitepaper files.
+- `tools/verify_slice.py`
+  Runs tests, Clippy, and format checks only for changed crates and downstream dependents.
+- `tools/workspace_doctor.py`
+  Checks repo health, tool availability, and skill sync state.
+- `tools/sync_codex_skills.py`
+  Installs repo-managed Codex skills into `$CODEX_HOME`.
+- `tools/tool_selftest.py`
+  Runs the Python tool regression suite and skill checks.
 
-4. **Validate**: Before commit, the validation engine checks that every modification is covered by a write lock, every deletion by a delete lock, and flags broken references and stale callers.
+Typical workflow:
 
-5. **Log**: Committed intents produce immutable semantic events with structured mutations. The async event log supports compensating rollback and state replay, with pluggable backends for local files or NATS JetStream.
+```bash
+python tools/verify_slice.py --changed
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --check
+```
 
-## Codex Skills
+If you plan to contribute, start with [CONTRIBUTING.md](./CONTRIBUTING.md).
 
-Two repo-managed Codex skills in `codex-skills/` provide structured workflows for AI agents:
+## Project Status
 
-| Skill | Purpose |
-|---|---|
-| `nexum-graph-sprint` | Spec-driven feature buildout across the 5-layer chassis |
-| `nexum-graph-maintainer` | Toolsmithing, workflow hardening, skill updates, rename hygiene |
+Implemented and usable today:
 
-Skills are installed to `$CODEX_HOME/skills/` via `tools/sync_codex_skills.py` and include agent configs (`openai.yaml`) and reference documents.
+- Semantic extraction for TypeScript, Python, and Rust
+- Graph-based diffing
+- Coordination engine and CRDT-backed lock state
+- Validation engine
+- Event log with replay and rollback
+- Local coordination server
+- Auth bootstrap, rotation, revocation, and audit verification
+- LSP shim with upstream proxy support
 
-## Numbers
+Active expansion areas:
 
-- **207** tests (186 Rust + 21 Python), all passing
-- **5** architectural layers
-- **10** CLI subcommands
-- **8** workspace crates
-- **3** language extractors (TypeScript, Python, Rust)
-- **5** custom LSP methods
-- **6** developer tools
-- **2** Codex skills
-- **0** lines of Rust written by a human
+- More language extractors
+- Stronger remote trust anchoring for audit provenance
+- Broader editor packaging and distribution
+- Distributed backend and deployment ergonomics
+
+## Philosophy
+
+Nexum Graph is opinionated:
+
+- Semantic units matter more than raw files.
+- Deterministic contracts matter more than agent improvisation.
+- Compiler and validator feedback should be part of the agent loop.
+- Operational safety has to be part of the product, not an afterthought.
+
+This repo is also a live example of spec-driven multi-agent Rust development. The codebase itself is part of the thesis.
+
+## Contributing
+
+Please read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening a pull request.
 
 ## License
 
-MIT
+This project is licensed under the MIT License. See [LICENSE](./LICENSE).
