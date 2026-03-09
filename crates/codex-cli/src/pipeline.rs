@@ -81,35 +81,50 @@ pub fn collect_files_at_ref(
 
 /// Parse source files into a CodeGraph using the appropriate extractor.
 ///
-/// For each file, selects the extractor whose `extensions()` match the
-/// file's extension, calls `extract()` and `dependencies()`, then adds
-/// units and edges to the graph.
+/// Uses a two-pass approach so that dependency resolution can see units
+/// from all files, not just the current file. This enables cross-file
+/// edges (e.g., `consumer.ts` calling a function defined in `shared.ts`).
+///
+/// Pass 1: Extract `SemanticUnit`s from every file.
+/// Pass 2: Resolve dependencies against the full unit set, then build the graph.
 pub fn build_graph(
     files: &[(String, Vec<u8>)],
     extractors: &[Box<dyn SemanticExtractor>],
 ) -> CodexResult<CodeGraph> {
-    let mut graph = CodeGraph::new();
+    // Pass 1: extract all units, remember which extractor/content pairs we need for pass 2.
+    let mut all_units = Vec::new();
+    let mut file_contexts: Vec<(usize, &[u8])> = Vec::new();
 
     for (path, content) in files {
         let Some(ext) = Path::new(path).extension().and_then(|ext| ext.to_str()) else {
             continue;
         };
-        let Some(extractor) = extractors
+        let Some((extractor_index, extractor)) = extractors
             .iter()
-            .find(|extractor| extractor.extensions().contains(&ext))
+            .enumerate()
+            .find(|(_, extractor)| extractor.extensions().contains(&ext))
         else {
             continue;
         };
 
         let units = extractor.extract(Path::new(path), content)?;
-        let dependencies = extractor.dependencies(&units, content)?;
+        all_units.extend(units);
+        file_contexts.push((extractor_index, content));
+    }
 
-        for unit in units {
-            graph.add_unit(unit);
-        }
-        for (from_id, to_id, kind) in dependencies {
-            graph.add_dep(from_id, to_id, kind);
-        }
+    // Pass 2: resolve dependencies with full cross-file visibility.
+    let mut all_deps = Vec::new();
+    for &(extractor_index, content) in &file_contexts {
+        let deps = extractors[extractor_index].dependencies(&all_units, content)?;
+        all_deps.extend(deps);
+    }
+
+    let mut graph = CodeGraph::new();
+    for unit in all_units {
+        graph.add_unit(unit);
+    }
+    for (from_id, to_id, kind) in all_deps {
+        graph.add_dep(from_id, to_id, kind);
     }
 
     Ok(graph)

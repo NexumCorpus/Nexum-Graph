@@ -3,3 +3,7 @@
 *.swo
 .DS_Store
 Thumbs.db
+
+# Spec documents (keep out of public repo)
+*.docx
+*.pdf

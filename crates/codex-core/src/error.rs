@@ -25,6 +25,9 @@ pub enum CodexError {
 
     #[error("serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
+
+    #[error("coordination error: {0}")]
+    Coordination(String),
 }
 
 /// Alias for Results using CodexError.
