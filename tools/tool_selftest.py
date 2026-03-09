@@ -12,10 +12,16 @@ from pathlib import Path
 
 TOOLS = [
     "tools/spec_query.py",
+    "tools/sync_codex_skills.py",
+    "tools/test_skill_sync.py",
     "tools/verify_slice.py",
     "tools/workspace_doctor.py",
     "tools/test_repo_tools.py",
-    "tools/tool_selftest.py",
+]
+
+REPO_SKILLS = [
+    "codex-skills/nexum-graph-sprint",
+    "codex-skills/nexum-graph-maintainer",
 ]
 
 SKILLS = [
@@ -71,25 +77,38 @@ def run_step(name: str, command: list[str]) -> StepResult:
 
 
 def build_steps(skip_skills: bool) -> list[tuple[str, list[str]]]:
+    validator = (
+        Path.home()
+        / ".codex"
+        / "skills"
+        / ".system"
+        / "skill-creator"
+        / "scripts"
+        / "quick_validate.py"
+    )
     steps: list[tuple[str, list[str]]] = [
         ("py_compile", [sys.executable, "-m", "py_compile", *TOOLS]),
         (
             "unit_tests",
             [sys.executable, "-m", "unittest", "discover", "-s", "tools", "-p", "test_*.py"],
         ),
+        ("skill_repo_check", [sys.executable, "tools/sync_codex_skills.py", "--check", "--json"]),
         ("workspace_doctor", [sys.executable, "tools/workspace_doctor.py", "--json"]),
     ]
 
+    for skill_dir in REPO_SKILLS:
+        skill_path = repo_root() / skill_dir
+        if skill_path.exists():
+            steps.append(
+                (
+                    f"repo_skill:{skill_path.name}",
+                    [sys.executable, str(validator), str(skill_path)],
+                )
+            )
+        else:
+            steps.append((f"repo_skill:{skill_path.name}", []))
+
     if not skip_skills:
-        validator = (
-            Path.home()
-            / ".codex"
-            / "skills"
-            / ".system"
-            / "skill-creator"
-            / "scripts"
-            / "quick_validate.py"
-        )
         for skill_dir in SKILLS:
             if skill_dir.exists():
                 steps.append(

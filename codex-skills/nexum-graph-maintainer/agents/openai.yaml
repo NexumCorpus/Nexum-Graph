@@ -1,0 +1,4 @@
+interface:
+  display_name: "Nexum Graph Maintainer"
+  short_description: "Harden Nexum Graph tools and skills"
+  default_prompt: "Use $nexum-graph-maintainer to improve Nexum Graph developer tooling, skills, or repo hygiene."
