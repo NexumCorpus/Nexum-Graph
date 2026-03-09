@@ -1,0 +1,21 @@
+[package]
+name = "codex-cli"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "CLI binary for Project Codex (codex diff, codex check, codex serve)"
+
+[[bin]]
+name = "codex"
+path = "src/main.rs"
+
+[dependencies]
+codex-core = { workspace = true }
+codex-parse = { workspace = true }
+codex-graph = { workspace = true }
+clap = { workspace = true }
+git2 = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]

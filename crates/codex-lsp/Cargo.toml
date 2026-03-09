@@ -1,0 +1,18 @@
+[package]
+name = "codex-lsp"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "LSP proxy for IDE integration with semantic coordination"
+
+[dependencies]
+codex-core = { workspace = true }
+codex-graph = { workspace = true }
+tower-lsp = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]

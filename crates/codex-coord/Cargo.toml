@@ -1,0 +1,17 @@
+[package]
+name = "codex-coord"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Intent declaration, semantic locking, coordination protocol"
+
+[dependencies]
+codex-core = { workspace = true }
+codex-graph = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
