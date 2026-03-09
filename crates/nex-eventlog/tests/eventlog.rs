@@ -1,7 +1,8 @@
 use chrono::{TimeZone, Utc};
 use nex_core::{SemanticUnit, UnitKind};
 use nex_eventlog::{EventLog, Mutation, SemanticEvent};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use uuid::Uuid;
 
 fn make_unit(name: &str, file: &str, body_hash: u64) -> SemanticUnit {
@@ -41,6 +42,20 @@ fn event(
         mutations,
         parent_event: None,
         tags: Vec::new(),
+    }
+}
+
+fn env_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn clear_eventlog_env() {
+    unsafe {
+        std::env::remove_var("NEX_EVENTLOG_BACKEND");
+        std::env::remove_var("NEX_NATS_URL");
+        std::env::remove_var("NEX_EVENTLOG_STREAM");
+        std::env::remove_var("NEX_EVENTLOG_SUBJECT_PREFIX");
     }
 }
 
@@ -115,7 +130,33 @@ fn compensate_reverses_all_mutation_variants() {
 }
 
 #[test]
-fn append_and_list_round_trip() {
+fn for_repo_uses_local_backend_by_default() {
+    let _guard = env_lock().lock().unwrap();
+    clear_eventlog_env();
+
+    let repo = std::env::temp_dir().join(format!("nex-eventlog-repo-{}", Uuid::new_v4()));
+    let log = EventLog::for_repo(Path::new(&repo));
+    assert_eq!(log.backend_name(), "local-file");
+}
+
+#[test]
+fn for_repo_selects_jetstream_backend_when_enabled() {
+    let _guard = env_lock().lock().unwrap();
+    clear_eventlog_env();
+    unsafe {
+        std::env::set_var("NEX_EVENTLOG_BACKEND", "jetstream");
+        std::env::set_var("NEX_NATS_URL", "nats://127.0.0.1:4222");
+    }
+
+    let repo = std::env::temp_dir().join(format!("nex-eventlog-repo-{}", Uuid::new_v4()));
+    let log = EventLog::for_repo(Path::new(&repo));
+    assert_eq!(log.backend_name(), "jetstream");
+
+    clear_eventlog_env();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn append_and_list_round_trip() {
     let log = EventLog::new(temp_log_path());
     let intent_id = Uuid::new_v4();
     let unit = make_unit("validate", "handler.ts", 10);
@@ -139,17 +180,17 @@ fn append_and_list_round_trip() {
         }],
     );
 
-    log.append(second.clone()).unwrap();
-    log.append(first.clone()).unwrap();
+    log.append(second.clone()).await.unwrap();
+    log.append(first.clone()).await.unwrap();
 
-    let events = log.list().unwrap();
+    let events = log.list().await.unwrap();
     assert_eq!(events.len(), 2);
     assert_eq!(events[0].id, first.id);
     assert_eq!(events[1].id, second.id);
 }
 
-#[test]
-fn events_for_intent_filters_and_orders() {
+#[tokio::test(flavor = "current_thread")]
+async fn events_for_intent_filters_and_orders() {
     let log = EventLog::new(temp_log_path());
     let intent_a = Uuid::new_v4();
     let intent_b = Uuid::new_v4();
@@ -162,6 +203,7 @@ fn events_for_intent_filters_and_orders() {
         "other intent",
         vec![Mutation::AddUnit { unit: unit.clone() }],
     ))
+    .await
     .unwrap();
     let first = event(
         Uuid::new_v4(),
@@ -181,17 +223,17 @@ fn events_for_intent_filters_and_orders() {
             to: "auth::validate".to_string(),
         }],
     );
-    log.append(second.clone()).unwrap();
-    log.append(first.clone()).unwrap();
+    log.append(second.clone()).await.unwrap();
+    log.append(first.clone()).await.unwrap();
 
-    let events = log.events_for_intent(intent_a).unwrap();
+    let events = log.events_for_intent(intent_a).await.unwrap();
     assert_eq!(events.len(), 2);
     assert_eq!(events[0].id, first.id);
     assert_eq!(events[1].id, second.id);
 }
 
-#[test]
-fn replay_to_rebuilds_historical_state() {
+#[tokio::test(flavor = "current_thread")]
+async fn replay_to_rebuilds_historical_state() {
     let log = EventLog::new(temp_log_path());
     let intent_id = Uuid::new_v4();
     let before = make_unit("validate", "handler.ts", 10);
@@ -228,18 +270,18 @@ fn replay_to_rebuilds_historical_state() {
         }],
     );
 
-    log.append(first).unwrap();
-    log.append(second.clone()).unwrap();
-    log.append(third).unwrap();
+    log.append(first).await.unwrap();
+    log.append(second.clone()).await.unwrap();
+    log.append(third).await.unwrap();
 
-    let units = log.replay_to(second.id).unwrap();
+    let units = log.replay_to(second.id).await.unwrap();
     assert_eq!(units.len(), 1);
     assert_eq!(units[0].qualified_name, "validate");
     assert_eq!(units[0].body_hash, after.body_hash);
 }
 
-#[test]
-fn rollback_appends_compensating_event_when_clean() {
+#[tokio::test(flavor = "current_thread")]
+async fn rollback_appends_compensating_event_when_clean() {
     let log = EventLog::new(temp_log_path());
     let intent_id = Uuid::new_v4();
     let unit = make_unit("featureFn", "feature.ts", 10);
@@ -251,10 +293,11 @@ fn rollback_appends_compensating_event_when_clean() {
         "add feature",
         vec![Mutation::AddUnit { unit: unit.clone() }],
     );
-    log.append(original.clone()).unwrap();
+    log.append(original.clone()).await.unwrap();
 
     let outcome = log
         .rollback(intent_id, "system", "rollback feature")
+        .await
         .unwrap();
     assert!(outcome.is_clean());
     let rollback_event = outcome.rollback_event.expect("rollback event");
@@ -268,15 +311,15 @@ fn rollback_appends_compensating_event_when_clean() {
         }]
     );
 
-    let replayed = log.replay_to(rollback_event.id).unwrap();
+    let replayed = log.replay_to(rollback_event.id).await.unwrap();
     assert!(
         replayed.is_empty(),
         "rollback should remove the added feature"
     );
 }
 
-#[test]
-fn rollback_reports_conflict_when_later_event_touches_same_unit() {
+#[tokio::test(flavor = "current_thread")]
+async fn rollback_reports_conflict_when_later_event_touches_same_unit() {
     let log = EventLog::new(temp_log_path());
     let intent_a = Uuid::new_v4();
     let intent_b = Uuid::new_v4();
@@ -292,6 +335,7 @@ fn rollback_reports_conflict_when_later_event_touches_same_unit() {
             unit: before.clone(),
         }],
     ))
+    .await
     .unwrap();
     log.append(event(
         Uuid::new_v4(),
@@ -304,17 +348,19 @@ fn rollback_reports_conflict_when_later_event_touches_same_unit() {
             after: after.clone(),
         }],
     ))
+    .await
     .unwrap();
 
     let outcome = log
         .rollback(intent_a, "system", "rollback validate")
+        .await
         .unwrap();
     assert!(!outcome.is_clean());
     assert!(outcome.rollback_event.is_none());
     assert_eq!(outcome.conflicts.len(), 1);
     assert_eq!(outcome.conflicts[0].unit, before.id);
 
-    let events = log.list().unwrap();
+    let events = log.list().await.unwrap();
     assert_eq!(
         events.len(),
         2,

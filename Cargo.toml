@@ -28,7 +28,7 @@ petgraph = "0.8"
 loro = "1"
 
 # Networking & Event Streaming
-async-nats = "0.46"
+async-nats = { version = "0.46", features = ["jetstream"] }
 tower-lsp = "0.20"
 
 # CLI

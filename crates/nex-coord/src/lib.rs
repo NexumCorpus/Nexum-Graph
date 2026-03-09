@@ -10,11 +10,13 @@
 //! TTL expiry, graph queries, and protocol-facing lock snapshots.
 
 pub mod coordinator;
+pub mod crdt;
 pub mod detector;
 pub mod protocol;
 pub mod service;
 
 pub use coordinator::CoordinationEngine;
+pub use crdt::{CoordinationDocument, CrdtHeldLock, CrdtIntentRecord, CrdtLockEntry};
 pub use detector::ConflictDetector;
 pub use protocol::{
     CoordEvent, GraphQuery, GraphQueryKind, IntentConflict, IntentPayload, IntentResult, LockEntry,

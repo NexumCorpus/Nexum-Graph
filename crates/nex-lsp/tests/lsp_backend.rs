@@ -336,6 +336,60 @@ async fn code_lens_surfaces_python_lock_annotations() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn code_lens_surfaces_rust_lock_annotations() {
+    let (_dir, repo) = init_temp_repo();
+    write_and_stage(
+        &repo,
+        "src/lib.rs",
+        "fn validate(input: &str) -> bool {\n    !input.is_empty()\n}\n",
+    );
+    commit(&repo, "initial");
+
+    let nex_dir = repo.workdir().unwrap().join(".nex");
+    std::fs::create_dir_all(&nex_dir).unwrap();
+    std::fs::write(
+        nex_dir.join("locks.json"),
+        serde_json::to_string_pretty(&json!([{
+            "agent_name": "alice",
+            "agent_id": [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+            "target_name": "validate",
+            "target": [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+            "kind": "Write"
+        }]))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let uri = Url::from_file_path(repo.workdir().unwrap().join("src/lib.rs")).unwrap();
+    let config = test_config(&repo);
+    let (mut service, _socket) = build_service(config);
+    initialize_service(&mut service, &uri).await;
+
+    let lenses = service
+        .inner()
+        .code_lens(CodeLensParams {
+            text_document: TextDocumentIdentifier { uri },
+            work_done_progress_params: WorkDoneProgressParams {
+                work_done_token: None,
+            },
+            partial_result_params: Default::default(),
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(lenses.len(), 1);
+    assert!(
+        lenses[0]
+            .command
+            .as_ref()
+            .unwrap()
+            .title
+            .contains("Agent alice is editing this function")
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn did_save_publishes_validation_status_for_unlocked_change() {
     let (_dir, repo) = init_temp_repo();
     write_and_stage(

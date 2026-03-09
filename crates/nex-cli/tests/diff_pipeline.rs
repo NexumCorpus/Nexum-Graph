@@ -152,6 +152,20 @@ fn build_graph_supports_python_files_in_default_set() {
 }
 
 #[test]
+fn build_graph_supports_rust_files_in_default_set() {
+    let rs_file = (
+        "src/main.rs".to_string(),
+        b"fn main() {\n    helper();\n}\nfn helper() {}\n".to_vec(),
+    );
+    let files = vec![rs_file];
+    let extractors = default_extractors();
+
+    let graph = build_graph(&files, &extractors).expect("build graph");
+    assert_eq!(graph.unit_count(), 2);
+    assert!(graph.edge_count() >= 1);
+}
+
+#[test]
 fn build_graph_with_dependencies() {
     let source = br#"
 function helper(): number { return 42; }
@@ -394,6 +408,32 @@ fn diff_detects_python_body_change() {
         &repo,
         "src/app.py",
         "def greet(name: str) -> str:\n    return 'hi ' + name\n",
+    );
+    let c2 = commit(&repo, "v2");
+    tag(&repo, c2, "v2");
+
+    let diff = run_diff(repo.workdir().unwrap(), "v1", "v2").expect("run diff");
+    assert_eq!(diff.modified.len(), 1);
+    assert_eq!(diff.modified[0].after.name, "greet");
+    assert!(diff.modified[0].changes.contains(&ChangeKind::BodyChanged));
+}
+
+#[test]
+fn diff_detects_rust_body_change() {
+    let (_dir, repo) = init_temp_repo();
+
+    write_and_stage(
+        &repo,
+        "src/lib.rs",
+        "fn greet(name: &str) -> String {\n    format!(\"hello {}\", name)\n}\n",
+    );
+    let c1 = commit(&repo, "v1");
+    tag(&repo, c1, "v1");
+
+    write_and_stage(
+        &repo,
+        "src/lib.rs",
+        "fn greet(name: &str) -> String {\n    format!(\"hi {}\", name)\n}\n",
     );
     let c2 = commit(&repo, "v2");
     tag(&repo, c2, "v2");

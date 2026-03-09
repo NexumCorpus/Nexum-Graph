@@ -2,36 +2,20 @@
 //!
 //! This module implements the CLI coordination workflow:
 //! 1. Parse the codebase at HEAD to build a CodeGraph
-//! 2. Load/save lock state from `.nex/locks.json`
+//! 2. Load/save lock state from `.nex/coordination.loro` with `.nex/locks.json`
+//!    compatibility for existing workflows
 //! 3. Convert human-readable agent names and target names to IDs
 //! 4. Delegate to CoordinationEngine for lock operations
 
-use nex_coord::CoordinationEngine;
-use nex_core::{
-    AgentId, CodexError, CodexResult, IntentKind, LockResult, SemanticId, SemanticUnit,
-};
+use nex_coord::{CoordinationDocument, CoordinationEngine};
+use nex_core::{AgentId, CodexError, CodexResult, IntentKind, LockResult, SemanticUnit};
 use nex_graph::CodeGraph;
-use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-/// A persisted lock entry with human-readable metadata.
-///
-/// Wraps the raw `SemanticLock` IDs with the original agent name and
-/// target `qualified_name` so that `nex locks` can display readable output
-/// without rebuilding the CodeGraph.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LockEntry {
-    /// Human-readable agent name (e.g. "alice").
-    pub agent_name: String,
-    /// Deterministic AgentId derived from `agent_name` via BLAKE3.
-    pub agent_id: AgentId,
-    /// Human-readable target name (qualified_name of the semantic unit).
-    pub target_name: String,
-    /// SemanticId of the target unit.
-    pub target: SemanticId,
-    /// The kind of lock held.
-    pub kind: IntentKind,
-}
+pub use nex_coord::CrdtLockEntry as LockEntry;
+
+const LOCKS_JSON_FILE: &str = "locks.json";
+const COORDINATION_CRDT_FILE: &str = "coordination.loro";
 
 /// Convert a human-readable agent name to a deterministic `AgentId`.
 ///
@@ -71,9 +55,23 @@ pub fn parse_intent_kind(s: &str) -> CodexResult<IntentKind> {
 /// Returns an empty vec if the file does not exist.
 /// Returns `Err` if the file exists but contains malformed JSON.
 ///
-/// Path: `{repo_path}/.nex/locks.json`
+/// Paths:
+/// - preferred: `{repo_path}/.nex/coordination.loro`
+/// - fallback: `{repo_path}/.nex/locks.json`
 pub fn load_locks(repo_path: &Path) -> CodexResult<Vec<LockEntry>> {
-    let lock_path = repo_path.join(".nex").join("locks.json");
+    let nex_dir = repo_path.join(".nex");
+    let crdt_path = nex_dir.join(COORDINATION_CRDT_FILE);
+    let lock_path = nex_dir.join(LOCKS_JSON_FILE);
+
+    if crdt_path.exists() {
+        let document =
+            CoordinationDocument::load_from_path(&crdt_path, coordination_peer_id(repo_path))?;
+        let entries = document.lock_entries()?;
+        if !entries.is_empty() || !lock_path.exists() {
+            return Ok(entries);
+        }
+    }
+
     if !lock_path.exists() {
         return Ok(Vec::new());
     }
@@ -88,12 +86,21 @@ pub fn load_locks(repo_path: &Path) -> CodexResult<Vec<LockEntry>> {
 /// Creates the `.nex/` directory if it does not exist.
 /// Writes pretty-printed JSON via `serde_json::to_string_pretty`.
 ///
-/// Path: `{repo_path}/.nex/locks.json`
+/// Paths:
+/// - primary CRDT store: `{repo_path}/.nex/coordination.loro`
+/// - compatibility snapshot: `{repo_path}/.nex/locks.json`
 pub fn save_locks(repo_path: &Path, entries: &[LockEntry]) -> CodexResult<()> {
     let nex_dir = repo_path.join(".nex");
     std::fs::create_dir_all(&nex_dir)?;
+
+    let crdt_path = nex_dir.join(COORDINATION_CRDT_FILE);
+    let document =
+        CoordinationDocument::load_from_path(&crdt_path, coordination_peer_id(repo_path))?;
+    document.replace_lock_entries(entries)?;
+    document.save_to_path(&crdt_path)?;
+
     let content = serde_json::to_string_pretty(entries)?;
-    std::fs::write(nex_dir.join("locks.json"), content)?;
+    std::fs::write(nex_dir.join(LOCKS_JSON_FILE), content)?;
     Ok(())
 }
 
@@ -283,4 +290,21 @@ pub fn run_validate(
         agent_id,
         &semantic_locks,
     ))
+}
+
+fn coordination_peer_id(repo_path: &Path) -> u64 {
+    if let Ok(value) = std::env::var("NEX_COORD_PEER_ID")
+        && let Ok(peer_id) = value.parse::<u64>()
+    {
+        return peer_id;
+    }
+
+    let host = std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| "unknown-host".to_string());
+    let seed = format!("{host}:{}", repo_path.display());
+    let hash = blake3::hash(seed.as_bytes());
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&hash.as_bytes()[..8]);
+    u64::from_le_bytes(bytes)
 }

@@ -11,6 +11,7 @@ use std::path::Path;
 
 pub mod bridge;
 pub mod python;
+pub mod rust;
 pub mod typescript;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -49,14 +50,19 @@ pub fn python_extractor() -> Box<dyn SemanticExtractor> {
     Box::new(python::PythonExtractor::new())
 }
 
+/// Create a Rust semantic extractor.
+pub fn rust_extractor() -> Box<dyn SemanticExtractor> {
+    Box::new(rust::RustExtractor::new())
+}
+
 /// Create the default multi-language extractor set from the spec.
 pub fn default_extractors() -> Vec<Box<dyn SemanticExtractor>> {
-    vec![typescript_extractor(), python_extractor()]
+    vec![typescript_extractor(), python_extractor(), rust_extractor()]
 }
 
 /// Supported source file extensions across the default extractor set.
 pub fn supported_extensions() -> &'static [&'static str] {
-    &["ts", "tsx", "py"]
+    &["ts", "tsx", "py", "rs"]
 }
 
 /// Return whether the extension is supported by any built-in extractor.
@@ -69,6 +75,7 @@ pub fn extractor_for_extension(ext: &str) -> Option<Box<dyn SemanticExtractor>> 
     match ext {
         "ts" | "tsx" => Some(typescript_extractor()),
         "py" => Some(python_extractor()),
+        "rs" => Some(rust_extractor()),
         _ => None,
     }
 }

@@ -128,7 +128,7 @@ impl CodexLspBackend {
             return Ok(Vec::new());
         };
 
-        let events = EventLog::new(repo_path.join(".nex").join("events.json")).list()?;
+        let events = EventLog::for_repo(&repo_path).list().await?;
         let mut seen_events = self.shared.seen_events.lock().await;
         let mut payloads = Vec::new();
 

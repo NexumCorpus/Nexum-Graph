@@ -12,7 +12,7 @@ use nex_core::{CodexError, CodexResult};
 use nex_eventlog::{EventLog, Mutation, SemanticEvent};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, broadcast, watch};
@@ -23,7 +23,7 @@ use uuid::Uuid;
 struct AppState {
     service: Arc<Mutex<CoordinationService>>,
     events: broadcast::Sender<CoordEvent>,
-    event_log_path: PathBuf,
+    event_log: EventLog,
 }
 
 /// Request body for `/intent/commit`.
@@ -113,7 +113,7 @@ pub async fn spawn_server(repo_path: &Path, bind_addr: SocketAddr) -> CodexResul
     let state = AppState {
         service: Arc::new(Mutex::new(service)),
         events,
-        event_log_path: repo_path.join(".nex").join("events.json"),
+        event_log: EventLog::for_repo(repo_path),
     };
 
     let app = Router::new()
@@ -222,7 +222,7 @@ async fn commit_intent(
         tags: request.tags,
     };
 
-    EventLog::new(&state.event_log_path).append(event.clone())?;
+    state.event_log.append(event.clone()).await?;
     let _ = state.events.send(CoordEvent::IntentCommitted {
         intent_id: context.intent_id,
         agent_id: context.agent_id,

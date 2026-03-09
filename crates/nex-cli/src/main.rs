@@ -133,7 +133,7 @@ async fn main() {
         } => {
             let repo = repo_path.as_deref().unwrap_or(std::path::Path::new("."));
 
-            match eventlog_pipeline::run_log(repo, intent_id.as_deref()) {
+            match eventlog_pipeline::run_log(repo, intent_id.as_deref()).await {
                 Ok(events) => {
                     let out = output::format_event_log(&events, &format);
                     println!("{out}");
@@ -152,7 +152,7 @@ async fn main() {
         } => {
             let repo = repo_path.as_deref().unwrap_or(std::path::Path::new("."));
 
-            match eventlog_pipeline::run_rollback(repo, &intent_id, &agent_name) {
+            match eventlog_pipeline::run_rollback(repo, &intent_id, &agent_name).await {
                 Ok(outcome) => {
                     let out = output::format_rollback_outcome(&outcome, &format);
                     println!("{out}");
@@ -173,7 +173,7 @@ async fn main() {
         } => {
             let repo = repo_path.as_deref().unwrap_or(std::path::Path::new("."));
 
-            match eventlog_pipeline::run_replay(repo, &to) {
+            match eventlog_pipeline::run_replay(repo, &to).await {
                 Ok(units) => {
                     let out = output::format_replay_state(&units, &format);
                     println!("{out}");

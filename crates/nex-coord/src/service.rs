@@ -6,6 +6,7 @@
 //! serializable lock snapshots.
 
 use crate::coordinator::CoordinationEngine;
+use crate::crdt::{CoordinationDocument, CrdtHeldLock, CrdtIntentRecord};
 use crate::protocol::{
     GraphQuery, GraphQueryKind, IntentConflict, IntentPayload, IntentResult, LockEntry, LockKind,
     PlannedChange,
@@ -74,15 +75,36 @@ pub struct ExpiredIntent {
 pub struct CoordinationService {
     engine: CoordinationEngine,
     intents: HashMap<Uuid, ActiveIntent>,
+    replica: CoordinationDocument,
 }
 
 impl CoordinationService {
     /// Create a new service from a code graph snapshot.
     pub fn new(graph: CodeGraph) -> Self {
+        Self::new_with_peer(graph, random_peer_id())
+    }
+
+    /// Create a new service with an explicit CRDT peer id.
+    pub fn new_with_peer(graph: CodeGraph, peer_id: u64) -> Self {
         Self {
             engine: CoordinationEngine::new(graph),
             intents: HashMap::new(),
+            replica: CoordinationDocument::new(peer_id)
+                .expect("coordination CRDT document should initialize"),
         }
+    }
+
+    /// Export the service CRDT state for replica sync.
+    pub fn export_crdt(&self) -> CodexResult<Vec<u8>> {
+        self.replica.export_bytes()
+    }
+
+    /// Merge remote CRDT updates and rebuild the in-memory lock engine.
+    pub fn merge_crdt(&mut self, bytes: &[u8]) -> CodexResult<()> {
+        self.replica.merge_bytes(bytes)?;
+        self.rebuild_from_replica()?;
+        let _ = self.expire_stale();
+        Ok(())
     }
 
     /// Declare an intent, acquire all required locks, and return the result.
@@ -130,17 +152,25 @@ impl CoordinationService {
         }
 
         let lock_token = Uuid::new_v4();
-        self.intents.insert(
-            payload.id,
-            ActiveIntent {
-                payload,
-                hashed_agent_id,
-                lock_token,
-                acquired: Utc::now(),
-                expires,
-                held_locks: acquired,
-            },
-        );
+        let active = ActiveIntent {
+            payload,
+            hashed_agent_id,
+            lock_token,
+            acquired: Utc::now(),
+            expires,
+            held_locks: acquired,
+        };
+
+        if let Err(err) = self.replica.upsert_intent(&active_to_record(&active)) {
+            for rollback in &active.held_locks {
+                let _ = self
+                    .engine
+                    .release_lock(&active.hashed_agent_id, &rollback.target);
+            }
+            return Err(err);
+        }
+
+        self.intents.insert(active.payload.id, active);
 
         Ok(IntentResult::Approved {
             lock_token,
@@ -155,7 +185,18 @@ impl CoordinationService {
         lock_token: Uuid,
     ) -> CodexResult<CommitContext> {
         let active = self.take_active_intent(intent_id, lock_token)?;
-        let released_locks = release_active_intent(&mut self.engine, &active)?;
+        if let Err(err) = self.replica.remove_intent(intent_id) {
+            self.intents.insert(intent_id, active);
+            return Err(err);
+        }
+        let released_locks = match release_active_intent(&mut self.engine, &active) {
+            Ok(released_locks) => released_locks,
+            Err(err) => {
+                let _ = self.replica.upsert_intent(&active_to_record(&active));
+                self.intents.insert(intent_id, active);
+                return Err(err);
+            }
+        };
         Ok(CommitContext {
             intent_id,
             agent_id: active.payload.agent_id,
@@ -167,7 +208,18 @@ impl CoordinationService {
     /// Abort an active intent, releasing its locks without recording work.
     pub fn abort_intent(&mut self, intent_id: Uuid, lock_token: Uuid) -> CodexResult<AbortContext> {
         let active = self.take_active_intent(intent_id, lock_token)?;
-        let released_locks = release_active_intent(&mut self.engine, &active)?;
+        if let Err(err) = self.replica.remove_intent(intent_id) {
+            self.intents.insert(intent_id, active);
+            return Err(err);
+        }
+        let released_locks = match release_active_intent(&mut self.engine, &active) {
+            Ok(released_locks) => released_locks,
+            Err(err) => {
+                let _ = self.replica.upsert_intent(&active_to_record(&active));
+                self.intents.insert(intent_id, active);
+                return Err(err);
+            }
+        };
         Ok(AbortContext {
             intent_id,
             agent_id: active.payload.agent_id,
@@ -242,6 +294,7 @@ impl CoordinationService {
         for intent_id in expired_ids {
             if let Some(active) = self.intents.remove(&intent_id) {
                 let released_locks = release_active_intent(&mut self.engine, &active).unwrap_or(0);
+                let _ = self.replica.remove_intent(intent_id);
                 expired.push(ExpiredIntent {
                     intent_id,
                     agent_id: active.payload.agent_id,
@@ -330,6 +383,25 @@ impl CoordinationService {
             .map(|unit| unit.qualified_name.clone())
             .unwrap_or_else(|| hex_semantic_id(&target))
     }
+
+    fn rebuild_from_replica(&mut self) -> CodexResult<()> {
+        let records = self.replica.intent_records()?;
+
+        let mut intents = HashMap::with_capacity(records.len());
+        let mut locks = Vec::new();
+        for record in records {
+            locks.extend(record.held_locks.iter().map(|held| nex_core::SemanticLock {
+                agent_id: record.hashed_agent_id,
+                target: held.target,
+                kind: held.kind,
+            }));
+            intents.insert(record.intent_id, record_to_active(record));
+        }
+
+        self.engine.import_locks(locks);
+        self.intents = intents;
+        Ok(())
+    }
 }
 
 fn planned_locks(payload: &IntentPayload) -> Vec<HeldLock> {
@@ -408,4 +480,47 @@ fn format_agent_id(agent_id: AgentId) -> String {
 
 fn hex_semantic_id(id: &SemanticId) -> String {
     id.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn active_to_record(active: &ActiveIntent) -> CrdtIntentRecord {
+    CrdtIntentRecord {
+        intent_id: active.payload.id,
+        payload: active.payload.clone(),
+        hashed_agent_id: active.hashed_agent_id,
+        lock_token: active.lock_token,
+        acquired: active.acquired,
+        expires: active.expires,
+        held_locks: active
+            .held_locks
+            .iter()
+            .map(|held| CrdtHeldLock {
+                target: held.target,
+                kind: held.kind,
+            })
+            .collect(),
+    }
+}
+
+fn record_to_active(record: CrdtIntentRecord) -> ActiveIntent {
+    ActiveIntent {
+        payload: record.payload,
+        hashed_agent_id: record.hashed_agent_id,
+        lock_token: record.lock_token,
+        acquired: record.acquired,
+        expires: record.expires,
+        held_locks: record
+            .held_locks
+            .into_iter()
+            .map(|held| HeldLock {
+                target: held.target,
+                kind: held.kind,
+            })
+            .collect(),
+    }
+}
+
+fn random_peer_id() -> u64 {
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&Uuid::new_v4().as_bytes()[..8]);
+    u64::from_le_bytes(bytes)
 }

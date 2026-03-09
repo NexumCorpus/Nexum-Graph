@@ -50,15 +50,15 @@ fn repo_log(repo: &std::path::Path) -> EventLog {
     EventLog::new(repo.join(".nex").join("events.json"))
 }
 
-#[test]
-fn run_log_returns_empty_when_no_event_file() {
+#[tokio::test(flavor = "current_thread")]
+async fn run_log_returns_empty_when_no_event_file() {
     let dir = temp_repo();
-    let events = run_log(dir.path(), None).unwrap();
+    let events = run_log(dir.path(), None).await.unwrap();
     assert!(events.is_empty());
 }
 
-#[test]
-fn run_log_lists_events_in_timestamp_order() {
+#[tokio::test(flavor = "current_thread")]
+async fn run_log_lists_events_in_timestamp_order() {
     let dir = temp_repo();
     let log = repo_log(dir.path());
     let intent_id = Uuid::new_v4();
@@ -84,17 +84,17 @@ fn run_log_lists_events_in_timestamp_order() {
             unit: feature.clone(),
         }],
     );
-    log.append(later.clone()).unwrap();
-    log.append(earlier.clone()).unwrap();
+    log.append(later.clone()).await.unwrap();
+    log.append(earlier.clone()).await.unwrap();
 
-    let events = run_log(dir.path(), None).unwrap();
+    let events = run_log(dir.path(), None).await.unwrap();
     assert_eq!(events.len(), 2);
     assert_eq!(events[0].id, earlier.id);
     assert_eq!(events[1].id, later.id);
 }
 
-#[test]
-fn run_log_filters_by_intent_id() {
+#[tokio::test(flavor = "current_thread")]
+async fn run_log_filters_by_intent_id() {
     let dir = temp_repo();
     let log = repo_log(dir.path());
     let intent_a = Uuid::new_v4();
@@ -110,6 +110,7 @@ fn run_log_filters_by_intent_id() {
             unit: helper.clone(),
         }],
     ))
+    .await
     .unwrap();
     let target = event(
         Uuid::new_v4(),
@@ -118,15 +119,17 @@ fn run_log_filters_by_intent_id() {
         "target intent",
         vec![Mutation::AddUnit { unit: helper }],
     );
-    log.append(target.clone()).unwrap();
+    log.append(target.clone()).await.unwrap();
 
-    let events = run_log(dir.path(), Some(&intent_a.to_string())).unwrap();
+    let events = run_log(dir.path(), Some(&intent_a.to_string()))
+        .await
+        .unwrap();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].id, target.id);
 }
 
-#[test]
-fn run_rollback_appends_compensating_event_when_clean() {
+#[tokio::test(flavor = "current_thread")]
+async fn run_rollback_appends_compensating_event_when_clean() {
     let dir = temp_repo();
     let log = repo_log(dir.path());
     let intent_id = Uuid::new_v4();
@@ -141,19 +144,21 @@ fn run_rollback_appends_compensating_event_when_clean() {
             unit: feature.clone(),
         }],
     );
-    log.append(original.clone()).unwrap();
+    log.append(original.clone()).await.unwrap();
 
-    let outcome = run_rollback(dir.path(), &intent_id.to_string(), "system").unwrap();
+    let outcome = run_rollback(dir.path(), &intent_id.to_string(), "system")
+        .await
+        .unwrap();
     assert!(outcome.is_clean());
     assert!(outcome.rollback_event.is_some());
 
-    let events = run_log(dir.path(), None).unwrap();
+    let events = run_log(dir.path(), None).await.unwrap();
     assert_eq!(events.len(), 2);
     assert_eq!(events[1].parent_event, Some(original.id));
 }
 
-#[test]
-fn run_rollback_reports_conflict_and_does_not_append() {
+#[tokio::test(flavor = "current_thread")]
+async fn run_rollback_reports_conflict_and_does_not_append() {
     let dir = temp_repo();
     let log = repo_log(dir.path());
     let intent_a = Uuid::new_v4();
@@ -170,6 +175,7 @@ fn run_rollback_reports_conflict_and_does_not_append() {
             unit: feature.clone(),
         }],
     ))
+    .await
     .unwrap();
     log.append(event(
         Uuid::new_v4(),
@@ -182,18 +188,21 @@ fn run_rollback_reports_conflict_and_does_not_append() {
             after: changed,
         }],
     ))
+    .await
     .unwrap();
 
-    let outcome = run_rollback(dir.path(), &intent_a.to_string(), "system").unwrap();
+    let outcome = run_rollback(dir.path(), &intent_a.to_string(), "system")
+        .await
+        .unwrap();
     assert!(!outcome.is_clean());
     assert!(outcome.rollback_event.is_none());
 
-    let events = run_log(dir.path(), None).unwrap();
+    let events = run_log(dir.path(), None).await.unwrap();
     assert_eq!(events.len(), 2);
 }
 
-#[test]
-fn run_replay_rebuilds_state_at_event_boundary() {
+#[tokio::test(flavor = "current_thread")]
+async fn run_replay_rebuilds_state_at_event_boundary() {
     let dir = temp_repo();
     let log = repo_log(dir.path());
     let intent_id = Uuid::new_v4();
@@ -230,20 +239,22 @@ fn run_replay_rebuilds_state_at_event_boundary() {
             unit: helper.clone(),
         }],
     );
-    log.append(first).unwrap();
-    log.append(second.clone()).unwrap();
-    log.append(third).unwrap();
+    log.append(first).await.unwrap();
+    log.append(second.clone()).await.unwrap();
+    log.append(third).await.unwrap();
 
-    let units = run_replay(dir.path(), &second.id.to_string()).unwrap();
+    let units = run_replay(dir.path(), &second.id.to_string())
+        .await
+        .unwrap();
     assert_eq!(units.len(), 1);
     assert_eq!(units[0].qualified_name, "validate");
     assert_eq!(units[0].body_hash, after.body_hash);
 }
 
-#[test]
-fn run_replay_invalid_event_id_errors() {
+#[tokio::test(flavor = "current_thread")]
+async fn run_replay_invalid_event_id_errors() {
     let dir = temp_repo();
-    let result = run_replay(dir.path(), "not-a-uuid");
+    let result = run_replay(dir.path(), "not-a-uuid").await;
     assert!(result.is_err());
 }
 
@@ -265,8 +276,8 @@ fn format_event_log_text_includes_descriptions() {
     assert!(text.contains("Mutations: 1"));
 }
 
-#[test]
-fn format_rollback_outcome_text_variants() {
+#[tokio::test(flavor = "current_thread")]
+async fn format_rollback_outcome_text_variants() {
     let dir = temp_repo();
     let log = repo_log(dir.path());
     let intent_id = Uuid::new_v4();
@@ -281,8 +292,11 @@ fn format_rollback_outcome_text_variants() {
             unit: feature.clone(),
         }],
     ))
+    .await
     .unwrap();
-    let clean = run_rollback(dir.path(), &intent_id.to_string(), "system").unwrap();
+    let clean = run_rollback(dir.path(), &intent_id.to_string(), "system")
+        .await
+        .unwrap();
     let clean_text = format_rollback_outcome(&clean, "text");
     assert!(clean_text.contains("Rollback APPLIED"));
     assert!(clean_text.contains("Mutations: 1"));
