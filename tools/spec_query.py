@@ -106,7 +106,20 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def configure_stdio() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except ValueError:
+            # Some wrapped streams cannot be reconfigured; default encoding will remain.
+            pass
+
+
 def main() -> int:
+    configure_stdio()
     args = parse_args()
 
     if args.list_docs:
