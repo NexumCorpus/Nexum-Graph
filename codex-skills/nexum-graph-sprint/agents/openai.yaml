@@ -1,0 +1,4 @@
+interface:
+  display_name: "Nexum Graph Sprint"
+  short_description: "Verified spec-driven Nexum Graph slices"
+  default_prompt: "Use $nexum-graph-sprint to continue the next verified implementation slice in the Nexum Graph workspace."

@@ -65,7 +65,7 @@ The binary is at `target/release/nex` (or `target/release/nex.exe` on Windows).
 cargo test --workspace
 ```
 
-All 186 tests should pass.
+All 186 Rust tests should pass. Run `python -m unittest discover -s tools -p "test_*.py"` for the 21 Python tool tests.
 
 ## Commands
 
@@ -210,7 +210,27 @@ python tools/workspace_doctor.py
 python tools/workspace_doctor.py --legacy-scan --json
 ```
 
-Checks toolchain availability, spec document presence, local Codex skill installation, dirty-tree impact analysis, and optional legacy-name scanning.
+Checks toolchain availability, spec document presence, repo-managed and installed skill status, skill sync drift detection, dirty-tree impact analysis, and optional legacy-name scanning.
+
+### `tools/sync_codex_skills.py` — Skill lifecycle manager
+
+```bash
+python tools/sync_codex_skills.py              # install / refresh all repo skills
+python tools/sync_codex_skills.py --check       # detect drift without writing
+python tools/sync_codex_skills.py --list        # list repo-managed skill names
+python tools/sync_codex_skills.py --check --json
+```
+
+Manages the lifecycle of Codex skills stored in `codex-skills/`. Compares repo-canonical copies against installed copies under `$CODEX_HOME/skills/` using deep file comparison (`filecmp.cmp`), reports missing/extra/changed files, and syncs on demand.
+
+### `tools/tool_selftest.py` — Regression runner
+
+```bash
+python tools/tool_selftest.py
+python tools/tool_selftest.py --skip-skills --json
+```
+
+Orchestrates `py_compile`, `unittest` discovery, `sync_codex_skills --check`, `workspace_doctor`, and optional local skill validation as a single CI-like pass. Use after changing any repo tool or skill.
 
 ## Configuration
 
@@ -247,14 +267,27 @@ Nexum Graph stores local state in `.nex/` at the repository root:
 
 5. **Log**: Committed intents produce immutable semantic events with structured mutations. The async event log supports compensating rollback and state replay, with pluggable backends for local files or NATS JetStream.
 
+## Codex Skills
+
+Two repo-managed Codex skills in `codex-skills/` provide structured workflows for AI agents:
+
+| Skill | Purpose |
+|---|---|
+| `nexum-graph-sprint` | Spec-driven feature buildout across the 5-layer chassis |
+| `nexum-graph-maintainer` | Toolsmithing, workflow hardening, skill updates, rename hygiene |
+
+Skills are installed to `$CODEX_HOME/skills/` via `tools/sync_codex_skills.py` and include agent configs (`openai.yaml`) and reference documents.
+
 ## Numbers
 
-- **186** tests, all passing
+- **207** tests (186 Rust + 21 Python), all passing
 - **5** architectural layers
 - **10** CLI subcommands
 - **8** workspace crates
 - **3** language extractors (TypeScript, Python, Rust)
 - **5** custom LSP methods
+- **6** developer tools
+- **2** Codex skills
 - **0** lines of Rust written by a human
 
 ## License

@@ -13,6 +13,7 @@ if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
 import spec_query
+import tool_selftest
 import verify_slice
 import workspace_doctor
 
@@ -182,6 +183,25 @@ class WorkspaceDoctorTests(unittest.TestCase):
         self.assertEqual(non_crate.status, "ok")
         self.assertEqual(payload["non_crate_paths"], ["tools/spec_query.py"])
 
+    def test_check_skills_reports_repo_local_and_sync_statuses(self) -> None:
+        with (
+            mock.patch.object(workspace_doctor, "actual_codex_home", return_value=Path("C:/tmp/codex-home")),
+            mock.patch.object(workspace_doctor.sync_codex_skills, "source_root", return_value=Path("E:/Project Codex/codex-skills")),
+            mock.patch.object(Path, "exists", return_value=True),
+            mock.patch.object(
+                workspace_doctor.sync_codex_skills,
+                "compare_skill_dirs",
+                return_value=("in_sync", "installed copy matches repo"),
+            ),
+        ):
+            results = workspace_doctor.check_skills()
+
+        labels = {result.label: result for result in results}
+        self.assertEqual(labels["repo_skill:nexum-graph-sprint"].status, "ok")
+        self.assertEqual(labels["skill:nexum-graph-sprint"].status, "ok")
+        self.assertEqual(labels["skill_sync:nexum-graph-sprint"].status, "ok")
+        self.assertEqual(labels["skill_sync:nexum-graph-sprint"].detail, "installed copy matches repo")
+
     def test_scan_legacy_naming_ignores_allowlisted_and_skipped_paths(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -209,6 +229,20 @@ class WorkspaceDoctorTests(unittest.TestCase):
                 }
             ],
         )
+
+
+class ToolSelftestTests(unittest.TestCase):
+    def test_build_steps_includes_repo_skill_checks(self) -> None:
+        with mock.patch.object(tool_selftest.Path, "home", return_value=Path("C:/Users/tester")):
+            steps = tool_selftest.build_steps(skip_skills=True)
+
+        names = [name for name, _ in steps]
+        py_compile = next(command for name, command in steps if name == "py_compile")
+        self.assertIn("skill_repo_check", names)
+        self.assertIn("repo_skill:nexum-graph-sprint", names)
+        self.assertIn("repo_skill:nexum-graph-maintainer", names)
+        self.assertNotIn("skill:nexum-graph-sprint", names)
+        self.assertNotIn("tools/tool_selftest.py", py_compile)
 
 
 if __name__ == "__main__":
