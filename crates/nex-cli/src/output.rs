@@ -9,8 +9,83 @@ use crate::audit_pipeline::AuditVerificationReport;
 use crate::auth_pipeline::{
     AuthConfigMode, AuthInitResult, AuthIssueResult, AuthRevokeResult, AuthStatus,
 };
+use crate::demo_pipeline::DemoReport;
 use nex_core::{ChangeKind, ConflictKind, ConflictReport, SemanticDiff, Severity};
 use std::fmt::Write;
+
+pub fn format_demo_report(report: &DemoReport, format: &str) -> String {
+    match format {
+        "json" => serde_json::to_string_pretty(report)
+            .unwrap_or_else(|err| format!("{{\"error\": \"{err}\"}}")),
+        _ => {
+            let mut output = String::new();
+            let _ = writeln!(output, "Nexum Graph Demo");
+            let _ = writeln!(output, "================");
+            let _ = writeln!(output, "Repo: {}", report.repo_path.display());
+            let _ = writeln!(output, "Head: {}", report.head_commit);
+            let _ = writeln!(
+                output,
+                "Languages detected: {}",
+                if report.detected_languages.is_empty() {
+                    "none".to_string()
+                } else {
+                    report.detected_languages.join(", ")
+                }
+            );
+            let _ = writeln!(output, "Indexed files: {}", report.indexed_files);
+            let _ = writeln!(output, "Semantic units: {}", report.semantic_units);
+            let _ = writeln!(output, "Dependency edges: {}", report.dependency_edges);
+
+            let _ = writeln!(output);
+            let _ = writeln!(
+                output,
+                "Current semantic diff: {} -> {}",
+                report.base_ref, report.head_ref
+            );
+            let _ = writeln!(output, "--------------------------------");
+            if report.current_diff.available {
+                let _ = writeln!(output, "Added: {}", report.current_diff.added);
+                let _ = writeln!(output, "Removed: {}", report.current_diff.removed);
+                let _ = writeln!(output, "Modified: {}", report.current_diff.modified);
+                let _ = writeln!(output, "Moved: {}", report.current_diff.moved);
+                if !report.current_diff.highlights.is_empty() {
+                    let _ = writeln!(output);
+                    let _ = writeln!(output, "Highlights:");
+                    for highlight in &report.current_diff.highlights {
+                        let _ = writeln!(output, "  {highlight}");
+                    }
+                }
+            } else if let Some(reason) = &report.current_diff.unavailable_reason {
+                let _ = writeln!(output, "Unavailable: {reason}");
+            }
+
+            let _ = writeln!(output);
+            let _ = writeln!(output, "Workspace state");
+            let _ = writeln!(output, "---------------");
+            let _ = writeln!(output, "Active locks: {}", report.active_locks);
+            let _ = writeln!(output, "Event log entries: {}", report.event_count);
+            let _ = writeln!(
+                output,
+                "Auth configured: {}",
+                if report.auth_configured { "yes" } else { "no" }
+            );
+
+            if !report.warnings.is_empty() {
+                let _ = writeln!(output);
+                let _ = writeln!(output, "Warnings:");
+                for warning in &report.warnings {
+                    let _ = writeln!(output, "  - {warning}");
+                }
+            }
+
+            let _ = writeln!(output);
+            let _ = writeln!(output, "Next:");
+            let _ = writeln!(output, "  nex diff {} {}", report.base_ref, report.head_ref);
+            let _ = writeln!(output, "  nex serve --host 127.0.0.1 --port 4000");
+            output
+        }
+    }
+}
 
 /// Format a SemanticDiff according to the requested format string.
 ///

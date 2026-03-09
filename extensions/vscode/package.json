@@ -1,0 +1,156 @@
+{
+  "name": "nexum-graph-vscode",
+  "displayName": "Nexum Graph",
+  "description": "VS Code integration for Nexum Graph semantic coordination and nex-lsp overlays.",
+  "version": "0.1.0",
+  "publisher": "nexum-corpus",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NexumCorpus/Nexum-Graph.git"
+  },
+  "bugs": {
+    "url": "https://github.com/NexumCorpus/Nexum-Graph/issues"
+  },
+  "homepage": "https://github.com/NexumCorpus/Nexum-Graph",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:typescript",
+    "onLanguage:typescriptreact",
+    "onLanguage:javascript",
+    "onLanguage:javascriptreact",
+    "onLanguage:python",
+    "onLanguage:rust",
+    "onCommand:nexumGraph.showSemanticDiff",
+    "onCommand:nexumGraph.restartLanguageClients",
+    "onCommand:nexumGraph.showOutput"
+  ],
+  "main": "./out/src/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "nexumGraph.showSemanticDiff",
+        "title": "Nexum Graph: Show Semantic Diff for Current File"
+      },
+      {
+        "command": "nexumGraph.restartLanguageClients",
+        "title": "Nexum Graph: Restart Language Clients"
+      },
+      {
+        "command": "nexumGraph.showOutput",
+        "title": "Nexum Graph: Show Output"
+      }
+    ],
+    "configuration": {
+      "title": "Nexum Graph",
+      "properties": {
+        "nexumGraph.nexPath": {
+          "type": "string",
+          "default": "nex-lsp",
+          "scope": "resource",
+          "description": "Path or command name for the nex-lsp binary."
+        },
+        "nexumGraph.baseRef": {
+          "type": "string",
+          "default": "HEAD~1",
+          "scope": "resource",
+          "description": "Base ref used for semantic diff and validation requests."
+        },
+        "nexumGraph.eventPollMs": {
+          "type": "number",
+          "default": 500,
+          "minimum": 100,
+          "scope": "resource",
+          "description": "Polling interval in milliseconds for Nexum Graph event notifications."
+        },
+        "nexumGraph.typescript.enabled": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Enable Nexum Graph for JavaScript and TypeScript files."
+        },
+        "nexumGraph.typescript.upstreamCommand": {
+          "type": "string",
+          "default": "typescript-language-server",
+          "scope": "resource",
+          "description": "Upstream language server command for JavaScript and TypeScript proxying. Set to an empty string to run overlay-only."
+        },
+        "nexumGraph.typescript.upstreamArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "--stdio"
+          ],
+          "scope": "resource",
+          "description": "Arguments passed to the JavaScript and TypeScript upstream language server."
+        },
+        "nexumGraph.python.enabled": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Enable Nexum Graph for Python files."
+        },
+        "nexumGraph.python.upstreamCommand": {
+          "type": "string",
+          "default": "pyright-langserver",
+          "scope": "resource",
+          "description": "Upstream language server command for Python proxying. Set to an empty string to run overlay-only."
+        },
+        "nexumGraph.python.upstreamArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "--stdio"
+          ],
+          "scope": "resource",
+          "description": "Arguments passed to the Python upstream language server."
+        },
+        "nexumGraph.rust.enabled": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Enable Nexum Graph for Rust files."
+        },
+        "nexumGraph.rust.upstreamCommand": {
+          "type": "string",
+          "default": "rust-analyzer",
+          "scope": "resource",
+          "description": "Upstream language server command for Rust proxying. Set to an empty string to run overlay-only."
+        },
+        "nexumGraph.rust.upstreamArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "description": "Arguments passed to the Rust upstream language server."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -w -p .",
+    "test": "npm run compile && node --test out/test/**/*.test.js",
+    "package": "npm run compile && npx @vscode/vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/vscode": "^1.96.0",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  }
+}

@@ -7,13 +7,32 @@
 use clap::Parser;
 use nex_cli::cli::{AuditCommands, AuthCommands, Cli, Commands};
 use nex_cli::{
-    audit_pipeline, auth_pipeline, coordination_pipeline, eventlog_pipeline, output, serve_pipeline,
+    audit_pipeline, auth_pipeline, coordination_pipeline, demo_pipeline, eventlog_pipeline, output,
+    serve_pipeline,
 };
 
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
     match cli.command {
+        Commands::Demo {
+            base,
+            head,
+            repo_path,
+            format,
+        } => {
+            let repo = repo_path.as_deref().unwrap_or(std::path::Path::new("."));
+            match demo_pipeline::run_demo(repo, &base, &head).await {
+                Ok(report) => {
+                    let out = output::format_demo_report(&report, &format);
+                    println!("{out}");
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
         Commands::Diff {
             ref_a,
             ref_b,

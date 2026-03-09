@@ -7,12 +7,28 @@ Nexum Graph turns a codebase into a semantic graph, coordinates multiple agents 
 This repository is the full product codebase:
 
 - 8 Rust crates in one workspace
-- 12 CLI commands
+- 13 CLI commands
 - TypeScript, Python, and Rust semantic extraction
 - Semantic diff, coordination, validation, event log, HTTP server, and LSP integration
-- 230+ automated tests across Rust and Python
+- hundreds of automated tests across Rust and Python
 
-## Why This Exists
+Start here:
+
+```bash
+cargo run -p nex-cli -- demo
+```
+
+That gives you a semantic snapshot of the repo in one command.
+
+## ⚡ What You Get
+
+- 🧠 A semantic map of your codebase instead of a blind pile of files
+- 🤝 A coordination layer for multiple agents so they do not silently collide
+- ✅ Validation that checks whether a change was actually authorized
+- 📜 An event log you can replay, inspect, and roll back
+- 🖥️ Editor and server surfaces that make the system usable in real workflows
+
+## ✨ Why It Feels Different
 
 Most AI coding tools still coordinate at the file or patch level. That breaks down when multiple agents touch the same repo at once.
 
@@ -26,8 +42,17 @@ Nexum Graph coordinates at the semantic unit level instead:
 
 The result is a foundation for multi-agent coding systems that need stronger guarantees than "hope the diffs merge."
 
-## What You Can Do Today
+In practice, that means a few almost-miraculous benefits:
 
+- 🔍 You can ask "what changed?" and get a semantic answer, not just a textual diff
+- 🛑 You can stop two agents from corrupting the same part of the system before it happens
+- 🧾 You can prove who intended what, what was allowed, and what actually landed
+- 🧯 You can replay or roll back changes with context instead of panic-reverting commits
+- 🧭 You can turn a repo into something agents can navigate with rules instead of vibes
+
+## 🚀 What You Can Do Today
+
+- Get an immediate semantic snapshot of a repo with `nex demo`.
 - Compute semantic diffs between refs with `nex diff`.
 - Detect merge-risk conflicts between branches with `nex check`.
 - Acquire semantic locks on specific units with `nex lock`.
@@ -37,7 +62,7 @@ The result is a foundation for multi-agent coding systems that need stronger gua
 - Verify the tamper-evident audit trail with `nex audit verify`.
 - Stream coordination signals into editors through `nex-lsp`.
 
-## Quickstart
+## 🚀 Quickstart
 
 ### 1. Clone and build
 
@@ -53,40 +78,80 @@ If you want the helper tools as well:
 python -m unittest discover -s tools -p "test_*.py"
 ```
 
-### 2. Get value in under five minutes
-
-Run a semantic diff:
+### 2. Prove the product in one command
 
 ```bash
-cargo run -p nex-cli -- diff HEAD~1 HEAD
+cargo run -p nex-cli -- demo
 ```
 
-Bootstrap secure server auth:
+You will immediately see:
 
-```bash
-cargo run -p nex-cli -- auth init --agent alice --agent bob
-```
-
-Start the coordination server:
-
-```bash
-cargo run -p nex-cli -- serve --host 127.0.0.1 --port 4000
-```
-
-Verify the audit trail:
-
-```bash
-cargo run -p nex-cli -- audit verify
-```
+- 🌐 languages detected
+- 🧩 indexed files, semantic units, and dependency edges
+- 🔄 the current `HEAD~1 -> HEAD` semantic diff
+- 🔐 current lock, event-log, and auth state
 
 Once built, you can replace `cargo run -p nex-cli --` with the installed `nex` binary.
 
-## Product Surface
+### 3. Take the next step when you want more
+
+```bash
+nex diff HEAD~1 HEAD
+nex check feature/a feature/b
+nex serve --host 127.0.0.1 --port 4000
+```
+
+What those do:
+
+- `nex diff` shows semantic changes between refs
+- `nex check` shows branch-to-branch merge risk before merge time
+- `nex serve` turns Nexum Graph into a live coordination service
+
+### 4. Add the editor experience
+
+```bash
+cd extensions/vscode
+npm install
+npm run compile
+npm run package
+```
+
+Then install the generated `.vsix` from VS Code with `Extensions: Install from VSIX...`.
+
+## 🧭 Choose Your Path
+
+### I just want proof this is real
+
+```bash
+nex demo
+```
+
+### I want to inspect a real change
+
+```bash
+nex diff HEAD~1 HEAD
+```
+
+### I want to see merge-risk before merge time
+
+```bash
+nex check feature/a feature/b
+```
+
+### I want to run it as coordination infrastructure
+
+```bash
+nex auth init --agent alice --agent bob
+nex serve --host 127.0.0.1 --port 4000
+```
+
+## 🛠️ Product Surface
 
 ### CLI commands
 
 | Command | Purpose |
 |---|---|
+| `nex demo` | One-command semantic snapshot of the current repository |
 | `nex diff` | Semantic diff between two git refs |
 | `nex check` | Conflict detection between two branches |
 | `nex lock` | Acquire a semantic lock |
@@ -112,7 +177,16 @@ The `nex-lsp` binary provides editor integration with:
 
 It also proxies standard LSP requests to an upstream server and merges Nexum Graph overlays into the editor experience.
 
-## Architecture
+### VS Code extension
+
+The repo now includes a source-distributed VS Code extension in [extensions/vscode](./extensions/vscode). It:
+
+- auto-starts `nex-lsp` for TypeScript, Python, and Rust workspaces
+- supports per-language upstream server configuration
+- falls back to overlay-only mode when an upstream command is not installed
+- exposes a `Nexum Graph: Show Semantic Diff for Current File` command
+
+## 🏗️ Architecture
 
 Nexum Graph is built as a five-layer chassis:
 
@@ -140,7 +214,7 @@ Nexum Graph is built as a five-layer chassis:
 | `nex-lsp` | Editor integration and upstream LSP proxy |
 | `nex-cli` | CLI, server, auth, audit, and operator workflows |
 
-## Supported Languages
+## 🌍 Supported Languages
 
 | Language | Current extractor coverage |
 |---|---|
@@ -150,7 +224,7 @@ Nexum Graph is built as a five-layer chassis:
 
 The extractor trait is intentionally extensible, so more languages can be added without changing the rest of the chassis.
 
-## Core Workflows
+## 🔄 Core Workflows
 
 ### Semantic diff
 
@@ -181,7 +255,14 @@ nex serve --host 0.0.0.0 --port 4000
 nex audit verify
 ```
 
-## Security and Operations
+### One-command repo demo
+
+```bash
+nex demo
+nex demo --base origin/main --head HEAD
+```
+
+## 🔐 Security and Operations
 
 Nexum Graph now includes operator-oriented hardening out of the box:
 
@@ -206,7 +287,7 @@ State lives under `.nex/`:
 
 For repo security policy and reporting guidance, see [SECURITY.md](./SECURITY.md).
 
-## Developer Workflow
+## 🧪 Developer Workflow
 
 The repo includes a small toolchain for spec-driven, slice-based development:
 
@@ -228,11 +309,12 @@ python tools/verify_slice.py --changed
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --check
+npm --prefix extensions/vscode test
 ```
 
 If you plan to contribute, start with [CONTRIBUTING.md](./CONTRIBUTING.md).
 
-## Project Status
+## 📈 Project Status
 
 Implemented and usable today:
 
@@ -252,7 +334,7 @@ Active expansion areas:
 - Broader editor packaging and distribution
 - Distributed backend and deployment ergonomics
 
-## Philosophy
+## 🧠 Philosophy
 
 Nexum Graph is opinionated:
 

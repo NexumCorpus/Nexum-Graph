@@ -13,3 +13,6 @@ __pycache__/
 *.docx
 *.pdf
 .vs/
+extensions/*/node_modules/
+extensions/*/out/
+*.vsix

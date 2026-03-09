@@ -62,6 +62,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --check
 python -m unittest discover -s tools -p "test_*.py"
+npm --prefix extensions/vscode test
 ```
 
 If you change Python tools or Codex skills, also run:

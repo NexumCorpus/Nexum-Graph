@@ -4,6 +4,7 @@ pub mod audit_pipeline;
 pub mod auth_pipeline;
 pub mod cli;
 pub mod coordination_pipeline;
+pub mod demo_pipeline;
 pub mod eventlog_pipeline;
 pub mod output;
 pub mod pipeline;

@@ -13,6 +13,21 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
+    /// Summarize the current repository in one semantic snapshot.
+    Demo {
+        /// Base git ref used for the current semantic diff preview.
+        #[arg(long, default_value = "HEAD~1")]
+        base: String,
+        /// Head git ref used for the current semantic diff preview.
+        #[arg(long, default_value = "HEAD")]
+        head: String,
+        /// Path to the git repository (defaults to ".").
+        #[arg(long)]
+        repo_path: Option<PathBuf>,
+        /// Output format: json or text.
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
     /// Compute semantic diff between two git refs.
     Diff {
         /// Base git ref (commit, branch, tag).
