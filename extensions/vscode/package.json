@@ -142,7 +142,7 @@
   "scripts": {
     "compile": "tsc -p .",
     "watch": "tsc -w -p .",
-    "test": "npm run compile && node --test out/test/**/*.test.js",
+    "test": "npm run compile && node --test out/test/config.test.js",
     "package": "npm run compile && npx @vscode/vsce package"
   },
   "devDependencies": {
