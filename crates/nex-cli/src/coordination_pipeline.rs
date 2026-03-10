@@ -6,6 +6,15 @@
 //!    compatibility for existing workflows
 //! 3. Convert human-readable agent names and target names to IDs
 //! 4. Delegate to CoordinationEngine for lock operations
+//!
+//! Reviewing this file:
+//! - This is the adapter between user-facing names, repo-local persistence, and
+//!   the semantic lock engine.
+//! - `run_validate()` intentionally remaps persisted lock targets back onto the
+//!   base graph by semantic name when content-addressed ids changed after an
+//!   edit. That behavior is required for validation correctness.
+//! - Changes here can look local but often affect CLI UX, validation semantics,
+//!   and persisted `.nex` compatibility at once.
 
 use nex_coord::{CoordinationDocument, CoordinationEngine};
 use nex_core::{

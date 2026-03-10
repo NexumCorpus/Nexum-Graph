@@ -8,7 +8,12 @@ Nexum Graph releases are GitHub Releases driven by semver tags in `vX.Y.Z` form.
    - `crates/nex-cli/Cargo.toml`
    - `crates/nex-lsp/Cargo.toml`
    - `extensions/vscode/package.json`
-2. Run the release checks locally:
+2. Regenerate the public spec docs if the archival `.docx` sources changed:
+
+```bash
+python tools/export_spec_markdown.py
+```
+3. Run the release checks locally:
 
 ```bash
 python tools/release_tools.py assert-version-parity --tag vX.Y.Z
@@ -23,7 +28,7 @@ npm --prefix extensions/vscode run package
 
 ## Cutting a release
 
-1. Commit the version bump and release notes changes.
+1. Commit the version bump, release notes, and any regenerated spec docs.
 2. Create the annotated tag:
 
 ```bash

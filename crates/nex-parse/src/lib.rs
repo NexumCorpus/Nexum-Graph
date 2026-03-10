@@ -5,6 +5,13 @@
 //! - Tree-sitter → Rowan bridge (first-of-its-kind in the Rust ecosystem)
 //! - Per-language extractors (TypeScript P0, Python P0, Rust P1)
 //! - `KindMap` generation from tree-sitter node-types.json
+//!
+//! Reviewing this file:
+//! - This is the narrow shared boundary for all language extractors.
+//! - `semantic_unit_id()` is the canonical semantic-id formula used across
+//!   TypeScript, Python, and Rust extractors.
+//! - If the extractor registry or id formula changes, update
+//!   `CORE_INVARIANTS.md` and the extractor contract tests.
 
 use nex_core::{CodexResult, DepKind, SemanticId, SemanticUnit};
 use std::path::Path;

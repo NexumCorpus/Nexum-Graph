@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Canonical public facts for Nexum Graph."""
+"""Canonical public facts for Nexum Graph.
+
+Reviewing this file:
+- This is the source of truth for the README facts block and public repo stats.
+- If the counting rules change, update the README block through this tool
+  rather than hand-editing the generated section.
+- Social copy, release notes, and review comments should prefer values emitted
+  here over ad hoc manual counts.
+"""
 
 from __future__ import annotations
 

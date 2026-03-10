@@ -137,8 +137,50 @@ class SpecQueryTests(unittest.TestCase):
                 source_path.write_bytes(b"changed")
                 self.assertIsNone(spec_query.read_cached_lines("spec", source_path))
 
+    def test_document_path_prefers_markdown_when_present(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            docs = root / "docs"
+            docs.mkdir()
+            (docs / "Nexum_Graph_Final_Implementation_Spec.md").write_text("# Spec\n", encoding="utf-8")
+            (root / "Nexum_Graph_Final_Implementation_Spec.docx").write_bytes(b"placeholder")
+
+            with mock.patch.object(spec_query, "repo_root", return_value=root):
+                path = spec_query.document_path("spec")
+
+        self.assertEqual(path.name, "Nexum_Graph_Final_Implementation_Spec.md")
+
+    def test_extract_markdown_lines_normalizes_headings_and_lists(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "spec.md"
+            path.write_text(
+                "<!-- generated -->\n# Heading\n\n- bullet point\n\nplain text\n```rust\nfn main() {}\n```\n",
+                encoding="utf-8",
+            )
+
+            lines = spec_query.extract_markdown_lines(path)
+
+        self.assertEqual(lines, ["Heading", "bullet point", "plain text", "fn main() {}"])
+
 
 class WorkspaceDoctorTests(unittest.TestCase):
+    def test_check_documents_prefers_markdown_and_warns_on_docx_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            docs = root / "docs"
+            docs.mkdir()
+            (docs / "Nexum_Graph_Final_Implementation_Spec.md").write_text("# Spec\n", encoding="utf-8")
+            (root / "Nexum_Graph_Whitepaper_v3.docx").write_bytes(b"placeholder")
+
+            with mock.patch.object(verify_slice, "repo_root", return_value=root):
+                results = workspace_doctor.check_documents()
+
+        labels = {result.label: result for result in results}
+        self.assertEqual(labels["doc:spec"].status, "ok")
+        self.assertIn("(markdown)", labels["doc:spec"].detail)
+        self.assertEqual(labels["doc:whitepaper-v3"].status, "warn")
+        self.assertIn("(docx fallback only)", labels["doc:whitepaper-v3"].detail)
+
     def test_actual_codex_home_prefers_environment(self) -> None:
         with mock.patch.dict(workspace_doctor.os.environ, {"CODEX_HOME": "C:/tmp/codex-home"}):
             self.assertEqual(

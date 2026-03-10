@@ -13,7 +13,7 @@ This repository is the full product codebase:
 - Guided first run via `nex start`
 - TypeScript, Python, and Rust semantic extraction
 - Semantic diff, coordination, validation, event log, HTTP server, and LSP integration
-- 272 source-defined automated tests (238 Rust, 34 Python)
+- 275 source-defined automated tests (238 Rust, 37 Python)
 - MIT licensed
 <!-- project-facts:end -->
 
@@ -226,6 +226,42 @@ The repo now includes a release-packaged VS Code extension plus the source under
 - falls back to overlay-only mode when an upstream command is not installed
 - exposes a `Nexum Graph: Show Semantic Diff for Current File` command
 
+## 🧭 Developer Review Map
+
+If you are reviewing the codebase rather than just using the product, start here:
+
+| File | Why it matters |
+|---|---|
+| [`CORE_INVARIANTS.md`](./CORE_INVARIANTS.md) | Frozen behavioral contracts for semantic identity, graph diffing, coordination, and persistence |
+| [`crates/nex-core/src/semantic.rs`](./crates/nex-core/src/semantic.rs) | Shared semantic contracts used everywhere else; changes here ripple across the whole product |
+| [`crates/nex-parse/src/lib.rs`](./crates/nex-parse/src/lib.rs) | Extractor registry and shared semantic-id formula |
+| [`crates/nex-graph/src/lib.rs`](./crates/nex-graph/src/lib.rs) | `CodeGraph` construction and the diff algorithm |
+| [`crates/nex-coord/src/coordinator.rs`](./crates/nex-coord/src/coordinator.rs) | Low-level lock engine and transitive conflict rules |
+| [`crates/nex-coord/src/service.rs`](./crates/nex-coord/src/service.rs) | Protocol-facing coordination service, TTL handling, and CRDT-backed reconciliation |
+| [`crates/nex-cli/src/coordination_pipeline.rs`](./crates/nex-cli/src/coordination_pipeline.rs) | Repo-local lock persistence, graph loading, and validation lock remapping |
+| [`crates/nex-cli/src/output.rs`](./crates/nex-cli/src/output.rs) | All public text, JSON, GitHub, and HTML report rendering |
+| [`tools/project_facts.py`](./tools/project_facts.py) | Canonical generated repo facts used to keep README stats and public copy from drifting |
+| [`action.yml`](./action.yml) | Public GitHub Action entrypoint for semantic PR checks |
+| [`FUZZING.md`](./FUZZING.md) | How the parse/build/diff fuzz surface is intended to be exercised |
+
+Recommended reading order for a new developer:
+
+1. [`CORE_INVARIANTS.md`](./CORE_INVARIANTS.md)
+2. [`crates/nex-core/src/semantic.rs`](./crates/nex-core/src/semantic.rs)
+3. [`crates/nex-graph/src/lib.rs`](./crates/nex-graph/src/lib.rs)
+4. [`crates/nex-coord/src/coordinator.rs`](./crates/nex-coord/src/coordinator.rs)
+5. [`crates/nex-coord/src/service.rs`](./crates/nex-coord/src/service.rs)
+6. [`crates/nex-cli/src/coordination_pipeline.rs`](./crates/nex-cli/src/coordination_pipeline.rs)
+
+If you are only validating the current release surface, focus on:
+
+- [`README.md`](./README.md)
+- [`NEWS.md`](./NEWS.md)
+- [`tools/project_facts.py`](./tools/project_facts.py)
+- [`action.yml`](./action.yml)
+- [`.github/workflows/semantic-check.yml`](./.github/workflows/semantic-check.yml)
+- [`extensions/vscode`](./extensions/vscode)
+
 ## 🏗️ Architecture
 
 Nexum Graph is built as a five-layer chassis:
@@ -380,7 +416,9 @@ The repo includes a small toolchain for spec-driven, slice-based development:
 - `tools/release_tools.py`
   Validates version parity, packages release bundles, and writes checksum manifests.
 - `tools/spec_query.py`
-  Searches the `.docx` implementation spec and whitepaper files.
+  Searches the Markdown implementation spec and whitepapers, with `.docx` fallback for archival sources.
+- `tools/export_spec_markdown.py`
+  Regenerates the public Markdown spec docs from the archival Word sources in the repo root.
 - `tools/verify_slice.py`
   Runs tests, Clippy, and format checks only for changed crates and downstream dependents.
 - `tools/workspace_doctor.py`
@@ -402,8 +440,28 @@ npm --prefix extensions/vscode test
 ```
 
 If you plan to contribute, start with [CONTRIBUTING.md](./CONTRIBUTING.md).
+
+## 📚 Architecture Docs
+
+The readable architecture docs live in:
+
+- [docs/Nexum_Graph_Final_Implementation_Spec.md](./docs/Nexum_Graph_Final_Implementation_Spec.md)
+- [docs/Nexum_Graph_Whitepaper_v3.md](./docs/Nexum_Graph_Whitepaper_v3.md)
+
+The `.docx` files in the repo root remain as archival source documents. If you need to refresh the
+Markdown exports after an edit to those source files, run:
+
+```bash
+python tools/export_spec_markdown.py
+```
 If you plan to cut releases, use [RELEASING.md](./RELEASING.md).
 If you want the public-facing update log, use [NEWS.md](./NEWS.md).
+
+For contract-heavy review work, also use:
+
+- [`CORE_INVARIANTS.md`](./CORE_INVARIANTS.md) for the non-negotiable semantics
+- [`FUZZING.md`](./FUZZING.md) for parse/build/diff stress guidance
+- [`tools/project_facts.py`](./tools/project_facts.py) for the generated README facts block
 
 ## 📈 Project Status
 

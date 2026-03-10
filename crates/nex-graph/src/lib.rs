@@ -8,6 +8,14 @@
 //!
 //! The `CodeGraph` API is specified in the Implementation Specification and
 //! constitutes a contract. Codex implements the function bodies.
+//!
+//! Reviewing this file:
+//! - `diff()` is intentionally name-based, not id-based; matching happens on
+//!   `qualified_name`.
+//! - Dependency edges do not influence diff classification; they matter later
+//!   for coordination and validation only.
+//! - If you change diff semantics, update `CORE_INVARIANTS.md` and the
+//!   property tests in `tests/diff_invariants.rs`.
 
 use nex_core::{
     ChangeKind, DepKind, ModifiedUnit, MovedUnit, SemanticDiff, SemanticId, SemanticUnit,

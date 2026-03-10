@@ -1,3 +1,11 @@
+#
+# Reviewing this file:
+# - This is the public GitHub Action entrypoint consumed by external repos.
+# - Keep its install/version contract aligned with install.sh, release.yml,
+#   and tools/release_tools.py.
+# - Output names and behavior changes here are effectively API changes for
+#   workflow users, not internal refactors.
+#
 name: "Nexum Graph Semantic Check"
 description: "Install Nexum Graph from GitHub Releases and run nex check between two refs."
 branding:

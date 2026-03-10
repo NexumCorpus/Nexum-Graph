@@ -5,6 +5,13 @@
 //! - `text`: Human-readable summary
 //! - `github`: GitHub-flavored markdown for PR comments
 //! - `html`: Visual report for sharing and artifact publishing
+//!
+//! Reviewing this file:
+//! - This is the public copy surface for CLI output, PR comments, and HTML
+//!   reports. Small wording changes here can affect product positioning and
+//!   GitHub Action behavior, not just terminal UX.
+//! - Keep text, JSON, GitHub, and HTML renderers semantically aligned even when
+//!   their presentation differs.
 
 use crate::audit_pipeline::AuditVerificationReport;
 use crate::auth_pipeline::{

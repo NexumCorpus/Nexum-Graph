@@ -89,9 +89,14 @@ That usually means one or more of:
 - `README.md`
 - `CONTRIBUTING.md`
 - `CORE_INVARIANTS.md`
+- `docs/Nexum_Graph_Final_Implementation_Spec.md`
+- `docs/Nexum_Graph_Whitepaper_v3.md`
 - `RELEASING.md`
 - `SECURITY.md`
 - command help text
+
+If you edit the archival `.docx` spec sources in the repo root, regenerate the public Markdown copies
+with `python tools/export_spec_markdown.py` in the same pull request.
 
 ## Security-sensitive changes
 

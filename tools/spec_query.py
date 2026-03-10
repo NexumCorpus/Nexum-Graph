@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Search the Nexum Graph specification and whitepaper .docx files."""
+"""Search the Nexum Graph specification and whitepaper source documents."""
 
 from __future__ import annotations
 
@@ -16,9 +16,18 @@ from pathlib import Path
 NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 
 DOCUMENTS = {
-    "spec": "Nexum_Graph_Final_Implementation_Spec.docx",
-    "whitepaper-v1": "Nexum_Graph_Whitepaper_v1.docx",
-    "whitepaper-v3": "Nexum_Graph_Whitepaper_v3.docx",
+    "spec": {
+        "markdown": "docs/Nexum_Graph_Final_Implementation_Spec.md",
+        "docx": "Nexum_Graph_Final_Implementation_Spec.docx",
+    },
+    "whitepaper-v1": {
+        "markdown": "docs/Nexum_Graph_Whitepaper_v1.md",
+        "docx": "Nexum_Graph_Whitepaper_v1.docx",
+    },
+    "whitepaper-v3": {
+        "markdown": "docs/Nexum_Graph_Whitepaper_v3.md",
+        "docx": "Nexum_Graph_Whitepaper_v3.docx",
+    },
 }
 
 
@@ -50,7 +59,11 @@ def cache_meta_path(doc_key: str) -> Path:
 
 
 def document_path(doc_key: str) -> Path:
-    return repo_root() / DOCUMENTS[doc_key]
+    entry = DOCUMENTS[doc_key]
+    markdown_path = repo_root() / entry["markdown"]
+    if markdown_path.exists():
+        return markdown_path
+    return repo_root() / entry["docx"]
 
 
 def read_cached_lines(doc_key: str, source_path: Path) -> list[str] | None:
@@ -88,6 +101,24 @@ def write_cache(doc_key: str, source_path: Path, lines: list[str]) -> None:
     )
 
 
+def extract_markdown_lines(source_path: Path) -> list[str]:
+    lines: list[str] = []
+    for raw_line in source_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("<!--"):
+            continue
+        if line.startswith("#"):
+            lines.append(line.lstrip("#").strip())
+            continue
+        if line.startswith("- "):
+            lines.append(line[2:].strip())
+            continue
+        if line.startswith("```"):
+            continue
+        lines.append(line)
+    return lines
+
+
 def extract_text(doc_key: str, refresh: bool) -> DocumentState:
     source_path = document_path(doc_key)
     if not source_path.exists():
@@ -104,16 +135,19 @@ def extract_text(doc_key: str, refresh: bool) -> DocumentState:
                 from_cache=True,
             )
 
-    with zipfile.ZipFile(source_path) as archive:
-        xml_bytes = archive.read("word/document.xml")
+    if source_path.suffix == ".md":
+        lines = extract_markdown_lines(source_path)
+    else:
+        with zipfile.ZipFile(source_path) as archive:
+            xml_bytes = archive.read("word/document.xml")
 
-    root = ET.fromstring(xml_bytes)
-    lines: list[str] = []
-    for paragraph in root.findall(".//w:p", NS):
-        runs = [node.text or "" for node in paragraph.findall(".//w:t", NS)]
-        text = "".join(runs).strip()
-        if text:
-            lines.append(text)
+        root = ET.fromstring(xml_bytes)
+        lines = []
+        for paragraph in root.findall(".//w:p", NS):
+            runs = [node.text or "" for node in paragraph.findall(".//w:t", NS)]
+            text = "".join(runs).strip()
+            if text:
+                lines.append(text)
 
     write_cache(doc_key, source_path, lines)
     return DocumentState(
@@ -225,14 +259,17 @@ def search_lines(lines: list[str], query_terms: list[str], context: int, mode: s
 
 
 def print_text_result(document: DocumentState, matches: list[dict], include_stats: bool) -> None:
-    source_label = "cache" if document.from_cache else "docx"
+    source_label = "cache" if document.from_cache else document.doc_path.suffix.lstrip(".")
     suffix = ""
     if include_stats:
         suffix = (
             f" ({len(document.lines)} lines, source={source_label}, "
             f"cache={document.cache_path.relative_to(repo_root())})"
         )
-    print(f"[{document.doc_key}] {DOCUMENTS[document.doc_key]}{suffix}")
+    print(
+        f"[{document.doc_key}] "
+        f"{document.doc_path.relative_to(repo_root())}{suffix}"
+    )
     for match in matches:
         print(textwrap.indent("\n".join(match["window"]), prefix="  "))
         print()
@@ -248,7 +285,8 @@ def main() -> int:
 
     if args.list_docs:
         for key, filename in DOCUMENTS.items():
-            print(f"{key}: {filename}")
+            preferred = document_path(key).relative_to(repo_root())
+            print(f"{key}: {preferred}")
         return 0
 
     if not args.query:

@@ -4,6 +4,15 @@
 //! checks. This service adds the protocol-facing concepts that the Phase 2
 //! server needs: intent ids, lock tokens, TTL expiry, graph queries, and
 //! serializable lock snapshots.
+//!
+//! Reviewing this file:
+//! - `CoordinationEngine` enforces lock semantics; this layer adds intent
+//!   lifecycle, ownership, TTL expiry, and CRDT-backed replica convergence.
+//! - `rebuild_from_replica()` is the most correctness-sensitive path in the
+//!   coordination stack. It must deterministically replay intents and discard
+//!   incompatible losers.
+//! - If behavior here changes, update `CORE_INVARIANTS.md` and the service/CRDT
+//!   tests before treating it as a refactor.
 
 use crate::coordinator::CoordinationEngine;
 use crate::crdt::{CoordinationDocument, CrdtHeldLock, CrdtIntentRecord};

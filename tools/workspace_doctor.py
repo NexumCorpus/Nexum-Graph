@@ -143,10 +143,19 @@ def check_commands() -> list[CheckResult]:
 
 def check_documents() -> list[CheckResult]:
     results: list[CheckResult] = []
-    for doc_key, filename in spec_query.DOCUMENTS.items():
-        path = verify_slice.repo_root() / filename
-        status = "ok" if path.exists() else "error"
-        results.append(CheckResult(status, f"doc:{doc_key}", str(path)))
+    for doc_key, entry in spec_query.DOCUMENTS.items():
+        markdown_path = verify_slice.repo_root() / entry["markdown"]
+        docx_path = verify_slice.repo_root() / entry["docx"]
+        if markdown_path.exists():
+            status = "ok"
+            detail = f"{markdown_path} (markdown)"
+        elif docx_path.exists():
+            status = "warn"
+            detail = f"{docx_path} (docx fallback only)"
+        else:
+            status = "error"
+            detail = str(markdown_path)
+        results.append(CheckResult(status, f"doc:{doc_key}", detail))
     return results
 
 

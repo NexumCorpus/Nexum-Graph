@@ -3,6 +3,13 @@
 //! These types are transcribed directly from the Implementation Specification
 //! and constitute the API contract for all downstream crates. Codex (the code
 //! generator) must not alter these type signatures.
+//!
+//! Reviewing this file:
+//! - Treat it like a shared schema, not an implementation detail.
+//! - `SemanticId` semantics must stay aligned with `CORE_INVARIANTS.md` and
+//!   the extractor implementation in `nex-parse`.
+//! - If this file changes, expect coordinated updates in parsing, graph diff,
+//!   coordination, validation, event log replay, and tests across the repo.
 
 use serde::{Deserialize, Serialize};
 use std::ops::Range;

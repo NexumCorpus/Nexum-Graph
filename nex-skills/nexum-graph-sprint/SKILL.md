@@ -12,7 +12,7 @@ Use this skill for spec-driven buildout of the Nexum Graph workspace. The projec
 1. Establish current repo state before coding.
    Run `python tools/workspace_doctor.py` when the workspace state, local skills, or developer toolchain may be relevant. Read `README.md`, inspect `git status --short`, and look at the most recent commits if the current slice is unclear.
 2. Ground the task in the implementation docs.
-   Use `python tools/spec_query.py <terms>` to search the implementation spec or whitepapers instead of manually opening `.docx` files. Prefer `--mode phrase` for exact architectural terms and `--stats` when cache freshness matters.
+   Use `python tools/spec_query.py <terms>` to search the Markdown implementation spec or whitepapers instead of manually opening archival `.docx` files. Prefer `--mode phrase` for exact architectural terms and `--stats` when cache freshness matters.
 3. Pick one vertical slice.
    Prefer finishing the next coherent slice end to end rather than scattering changes across unrelated layers. Keep changes aligned to the deterministic chassis: parse -> graph -> coord -> validate -> eventlog -> lsp -> cli. When the user asks for robustness, first improve the owning tool or interface instead of papering over the same friction in-line.
 4. Verify with workspace-aware scope.

@@ -17,6 +17,15 @@
 //! If agent A holds a Write/Delete lock on unit X, and agent B requests
 //! a Write/Delete lock on unit Y where X and Y are directly connected
 //! in the dependency graph (either direction), the request is denied.
+//!
+//! Reviewing this file:
+//! - This is the lowest-level lock semantics boundary in the coordination
+//!   stack. Prefer changing higher layers unless the lock rules themselves are
+//!   wrong.
+//! - `request_lock()` and the transitive conflict walk must stay aligned with
+//!   `CORE_INVARIANTS.md` and the state-machine/property tests.
+//! - Seemingly small compatibility changes here ripple into the service layer,
+//!   CLI lock UX, server auth ownership checks, and CRDT reconciliation.
 
 use nex_core::{
     AgentId, CodexError, CodexResult, CoordinationState, Intent, IntentKind, LockConflict,
