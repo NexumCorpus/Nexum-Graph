@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install or check repo-managed Codex skills for Nexum Graph."""
+"""Install or check repo-managed Nexum Graph skills."""
 
 from __future__ import annotations
 
@@ -14,6 +14,8 @@ from pathlib import Path
 
 IGNORE_NAMES = {"__pycache__"}
 IGNORE_SUFFIXES = {".pyc"}
+PRIMARY_SKILLS_DIR = "nex-skills"
+LEGACY_SKILLS_DIR = "codex-skills"
 
 
 @dataclass(frozen=True)
@@ -29,8 +31,24 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
+def preferred_source_root() -> Path:
+    return repo_root() / PRIMARY_SKILLS_DIR
+
+
+def legacy_source_root() -> Path:
+    return repo_root() / LEGACY_SKILLS_DIR
+
+
 def source_root() -> Path:
-    return repo_root() / "codex-skills"
+    preferred = preferred_source_root()
+    if preferred.exists():
+        return preferred
+
+    legacy = legacy_source_root()
+    if legacy.exists():
+        return legacy
+
+    return preferred
 
 
 def codex_home() -> Path:
@@ -43,7 +61,7 @@ def destination_root() -> Path:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Install or check repo-managed Codex skills from codex-skills/."
+        description=f"Install or check repo-managed Nexum Graph skills from {PRIMARY_SKILLS_DIR}/."
     )
     parser.add_argument(
         "--skill",

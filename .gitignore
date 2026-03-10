@@ -9,8 +9,10 @@ Thumbs.db
 __pycache__/
 *.pyc
 
-# Spec documents (keep out of public repo)
+# Ignore ad-hoc documents, but keep the canonical public spec docs tracked.
 *.docx
+!Nexum_Graph_Final_Implementation_Spec.docx
+!Nexum_Graph_Whitepaper_v3.docx
 *.pdf
 .vs/
 dist/

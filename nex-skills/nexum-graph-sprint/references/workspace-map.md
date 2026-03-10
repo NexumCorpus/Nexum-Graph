@@ -16,7 +16,7 @@
 - Public project name: `Nexum Graph`
 - Current workspace crates: `nex-*`
 - Current local state directory: `.nex/`
-- Legacy names may still appear in prompts, older conversation, or `.docx` document filenames as `Project Codex`
+- Legacy names may still appear in older prompts or conversation as `Project Codex`
 
 ## Repo Tools
 
@@ -35,8 +35,8 @@
 - Workspace health and rename scan:
   `python tools/workspace_doctor.py --legacy-scan`
 - Skill install or drift check:
-  `python tools/sync_codex_skills.py`
-  `python tools/sync_codex_skills.py --check`
+  `python tools/sync_nex_skills.py`
+  `python tools/sync_nex_skills.py --check`
 
 ## Default Slice Pattern
 

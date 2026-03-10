@@ -186,10 +186,10 @@ class WorkspaceDoctorTests(unittest.TestCase):
     def test_check_skills_reports_repo_local_and_sync_statuses(self) -> None:
         with (
             mock.patch.object(workspace_doctor, "actual_codex_home", return_value=Path("C:/tmp/codex-home")),
-            mock.patch.object(workspace_doctor.sync_codex_skills, "source_root", return_value=Path("E:/Project Codex/codex-skills")),
+            mock.patch.object(workspace_doctor.sync_nex_skills, "source_root", return_value=Path("E:/Project Codex/nex-skills")),
             mock.patch.object(Path, "exists", return_value=True),
             mock.patch.object(
-                workspace_doctor.sync_codex_skills,
+                workspace_doctor.sync_nex_skills,
                 "compare_skill_dirs",
                 return_value=("in_sync", "installed copy matches repo"),
             ),

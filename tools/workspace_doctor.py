@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import spec_query
-import sync_codex_skills
+import sync_nex_skills
 import verify_slice
 
 REQUIRED_COMMANDS = {
@@ -152,7 +152,7 @@ def check_documents() -> list[CheckResult]:
 
 def check_skills() -> list[CheckResult]:
     results: list[CheckResult] = []
-    repo_skills_root = sync_codex_skills.source_root()
+    repo_skills_root = sync_nex_skills.source_root()
     skills_root = actual_codex_home() / "skills"
     for skill_name in EXPECTED_SKILLS:
         repo_skill_path = repo_skills_root / skill_name / "SKILL.md"
@@ -163,7 +163,7 @@ def check_skills() -> list[CheckResult]:
         status = "ok" if skill_path.exists() else "warn"
         results.append(CheckResult(status, f"skill:{skill_name}", str(skill_path)))
 
-        sync_status, detail = sync_codex_skills.compare_skill_dirs(
+        sync_status, detail = sync_nex_skills.compare_skill_dirs(
             repo_skills_root / skill_name,
             skills_root / skill_name,
         )

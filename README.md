@@ -365,7 +365,7 @@ The repo includes a small toolchain for spec-driven, slice-based development:
   Runs tests, Clippy, and format checks only for changed crates and downstream dependents.
 - `tools/workspace_doctor.py`
   Checks repo health, tool availability, and skill sync state.
-- `tools/sync_codex_skills.py`
+- `tools/sync_nex_skills.py`
   Installs repo-managed Codex skills into `$CODEX_HOME`.
 - `tools/tool_selftest.py`
   Runs the Python tool regression suite and skill checks.

@@ -13,7 +13,7 @@ from pathlib import Path
 TOOLS = [
     "tools/release_tools.py",
     "tools/spec_query.py",
-    "tools/sync_codex_skills.py",
+    "tools/sync_nex_skills.py",
     "tools/test_skill_sync.py",
     "tools/verify_slice.py",
     "tools/workspace_doctor.py",
@@ -21,8 +21,8 @@ TOOLS = [
 ]
 
 REPO_SKILLS = [
-    "codex-skills/nexum-graph-sprint",
-    "codex-skills/nexum-graph-maintainer",
+    "nex-skills/nexum-graph-sprint",
+    "nex-skills/nexum-graph-maintainer",
 ]
 
 SKILLS = [
@@ -93,7 +93,7 @@ def build_steps(skip_skills: bool) -> list[tuple[str, list[str]]]:
             "unit_tests",
             [sys.executable, "-m", "unittest", "discover", "-s", "tools", "-p", "test_*.py"],
         ),
-        ("skill_repo_check", [sys.executable, "tools/sync_codex_skills.py", "--check", "--json"]),
+        ("skill_repo_check", [sys.executable, "tools/sync_nex_skills.py", "--check", "--json"]),
         ("workspace_doctor", [sys.executable, "tools/workspace_doctor.py", "--json"]),
     ]
 

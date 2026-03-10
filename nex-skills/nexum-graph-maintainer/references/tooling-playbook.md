@@ -10,7 +10,7 @@
   Use for crate-scoped verification. Prefer `--changed` for dirty work and `--since <rev>` for branch-relative checks.
 - `python tools/tool_selftest.py`
   Use after changing repo tools or local Nexum skills to run the Python regression suite and skill validation in one pass.
-- `python tools/sync_codex_skills.py`
+- `python tools/sync_nex_skills.py`
   Use to install repo-managed skill copies into `$CODEX_HOME/skills` and to detect local drift with `--check`.
 
 ## Local Skills
@@ -23,10 +23,10 @@
 ## Validation Commands
 
 - Repo skill validation:
-  `python C:\Users\dalea\.codex\skills\.system\skill-creator\scripts\quick_validate.py codex-skills\nexum-graph-sprint`
-  `python C:\Users\dalea\.codex\skills\.system\skill-creator\scripts\quick_validate.py codex-skills\nexum-graph-maintainer`
+  `python C:\Users\dalea\.codex\skills\.system\skill-creator\scripts\quick_validate.py nex-skills\nexum-graph-sprint`
+  `python C:\Users\dalea\.codex\skills\.system\skill-creator\scripts\quick_validate.py nex-skills\nexum-graph-maintainer`
 - Skill drift check:
-  `python tools/sync_codex_skills.py --check`
+  `python tools/sync_nex_skills.py --check`
 - Dynamic verifier dry run:
   `python tools/verify_slice.py --changed --dry-run`
 - Repo doctor with rename scan:

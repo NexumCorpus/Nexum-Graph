@@ -30,5 +30,5 @@
 
 ## Skill Sync
 
-- Use `python tools/sync_codex_skills.py` after editing `codex-skills/` to install or refresh the local copies under `$CODEX_HOME/skills`.
-- Use `python tools/sync_codex_skills.py --check` to detect local drift without writing.
+- Use `python tools/sync_nex_skills.py` after editing `nex-skills/` to install or refresh the local copies under `$CODEX_HOME/skills`.
+- Use `python tools/sync_nex_skills.py --check` to detect local drift without writing.

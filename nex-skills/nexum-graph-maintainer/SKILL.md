@@ -1,6 +1,6 @@
 ---
 name: nexum-graph-maintainer
-description: Use when improving Nexum Graph developer tooling, Codex skills, verification workflows, spec search, repo hygiene, rename cleanup, or local developer experience. Also use when the user asks to make Codex more robust, improve skills and tools, strengthen workflow automation, or harden the maintenance surface for Project Codex or Nexum Graph.
+description: Use when improving Nexum Graph developer tooling, repo-managed skills, verification workflows, spec search, repo hygiene, rename cleanup, or local developer experience. Also use when the user asks to make the project more robust, improve skills and tools, strengthen workflow automation, or harden the maintenance surface for Nexum Graph.
 ---
 
 # Nexum Graph Maintainer
@@ -18,7 +18,7 @@ Use this skill when the task is not a product feature slice but a capability sli
 4. Validate the new maintenance surface directly.
    Smoke-test each touched Python tool with concrete commands. Run `python tools/verify_slice.py --changed --dry-run` after repo-tool changes to confirm the verifier still resolves the workspace.
 5. Validate local skills.
-   Run `python tools/sync_codex_skills.py --check` after changing `codex-skills/`, and install updates with `python tools/sync_codex_skills.py` when the local copies are behind.
+   Run `python tools/sync_nex_skills.py --check` after changing `nex-skills/`, and install updates with `python tools/sync_nex_skills.py` when the local copies are behind.
 
 ## Working Rules
 

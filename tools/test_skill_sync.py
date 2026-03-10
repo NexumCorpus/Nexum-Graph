@@ -9,7 +9,7 @@ TOOLS_DIR = Path(__file__).resolve().parent
 if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
-import sync_codex_skills
+import sync_nex_skills
 
 
 def create_skill(root: Path, name: str, body: str = "# Skill\n") -> Path:
@@ -28,13 +28,13 @@ class SkillSyncTests(unittest.TestCase):
             root = Path(temp_dir)
             create_skill(root, "nexum-graph-sprint")
             (root / "not-a-skill").mkdir()
-            self.assertEqual(sync_codex_skills.list_skill_names(root), ["nexum-graph-sprint"])
+            self.assertEqual(sync_nex_skills.list_skill_names(root), ["nexum-graph-sprint"])
 
     def test_compare_skill_dirs_detects_missing_destination(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             source = create_skill(root / "source", "nexum-graph-sprint")
-            status, detail = sync_codex_skills.compare_skill_dirs(source, root / "dest" / "nexum-graph-sprint")
+            status, detail = sync_nex_skills.compare_skill_dirs(source, root / "dest" / "nexum-graph-sprint")
             self.assertEqual(status, "missing_destination")
             self.assertIn("not installed", detail)
 
@@ -43,8 +43,8 @@ class SkillSyncTests(unittest.TestCase):
             root = Path(temp_dir)
             source = create_skill(root / "source", "nexum-graph-sprint")
             destination = root / "dest" / "nexum-graph-sprint"
-            sync_codex_skills.sync_skill(source, destination)
-            status, detail = sync_codex_skills.compare_skill_dirs(source, destination)
+            sync_nex_skills.sync_skill(source, destination)
+            status, detail = sync_nex_skills.compare_skill_dirs(source, destination)
             self.assertEqual(status, "in_sync")
             self.assertEqual(detail, "installed copy matches repo")
 
@@ -54,7 +54,7 @@ class SkillSyncTests(unittest.TestCase):
             source = create_skill(root / "source", "nexum-graph-sprint")
             destination = create_skill(root / "dest", "nexum-graph-sprint")
             (destination / "references" / "note.md").write_text("changed\n", encoding="utf-8")
-            status, detail = sync_codex_skills.compare_skill_dirs(source, destination)
+            status, detail = sync_nex_skills.compare_skill_dirs(source, destination)
             self.assertEqual(status, "out_of_sync")
             self.assertIn("content differs", detail)
 
@@ -65,7 +65,7 @@ class SkillSyncTests(unittest.TestCase):
             destinations = root / "dest"
             create_skill(sources, "nexum-graph-sprint")
 
-            status = sync_codex_skills.evaluate_skill(
+            status = sync_nex_skills.evaluate_skill(
                 "nexum-graph-sprint",
                 sources=sources,
                 destinations=destinations,
@@ -83,7 +83,7 @@ class SkillSyncTests(unittest.TestCase):
             destination = create_skill(destinations, "nexum-graph-sprint")
             (destination / "SKILL.md").write_text("out of sync\n", encoding="utf-8")
 
-            status = sync_codex_skills.evaluate_skill(
+            status = sync_nex_skills.evaluate_skill(
                 "nexum-graph-sprint",
                 sources=sources,
                 destinations=destinations,

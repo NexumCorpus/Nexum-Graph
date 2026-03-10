@@ -16,9 +16,9 @@ from pathlib import Path
 NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 
 DOCUMENTS = {
-    "spec": "Project_Codex_Final_Implementation_Spec.docx",
-    "whitepaper-v1": "Project_Codex_Whitepaper_v1.docx",
-    "whitepaper-v3": "Project_Codex_Whitepaper_v3.docx",
+    "spec": "Nexum_Graph_Final_Implementation_Spec.docx",
+    "whitepaper-v1": "Nexum_Graph_Whitepaper_v1.docx",
+    "whitepaper-v3": "Nexum_Graph_Whitepaper_v3.docx",
 }
 
 

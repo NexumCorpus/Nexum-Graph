@@ -9,14 +9,14 @@
 
 ## Skill Changes
 
-1. Edit the checked-in canonical copy under `codex-skills/`.
+1. Edit the checked-in canonical copy under `nex-skills/`.
 2. Put detail in `references/`.
 3. Keep `agents/openai.yaml` aligned with `SKILL.md`.
 4. Run `quick_validate.py` on the repo-managed skill folder.
-5. Run `python tools/sync_codex_skills.py` to refresh the installed local copy.
+5. Run `python tools/sync_nex_skills.py` to refresh the installed local copy.
 
 ## Rename Hygiene
 
 1. Use `python tools/workspace_doctor.py --legacy-scan` to build a reproducible hit list.
 2. Distinguish intentional legacy aliases from stale branding.
-3. Avoid renaming historical `.docx` spec files unless the surrounding tooling is updated in the same slice.
+3. Keep tool compatibility in place when renaming public-facing files or directories.

@@ -1,11 +1,11 @@
 ---
 name: nexum-graph-sprint
-description: Use when building, extending, or continuing Nexum Graph across semantic parsing, graph diffing, coordination, validation, event logging, LSP, CLI, or spec-driven architecture slices. Also use when the user says continue, keep going, build out, onward, implementation plan, whitepaper, or Project Codex.
+description: Use when building, extending, or continuing Nexum Graph across semantic parsing, graph diffing, coordination, validation, event logging, LSP, CLI, or spec-driven architecture slices. Also use when the user says continue, keep going, build out, onward, implementation plan, whitepaper, or refers to the project by its previous name.
 ---
 
 # Nexum Graph Sprint
 
-Use this skill for spec-driven buildout of the Nexum Graph workspace. The project was previously named Project Codex, so prompts, docx files, or older discussion may still use the old name even though the live crates and binaries now use `nex-*` names.
+Use this skill for spec-driven buildout of the Nexum Graph workspace. The project was previously named Project Codex, so older prompts or discussion may still use the old name even though the live crates and binaries now use `nex-*` names.
 
 ## Workflow
 
