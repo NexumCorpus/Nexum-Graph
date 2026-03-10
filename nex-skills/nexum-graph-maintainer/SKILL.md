@@ -32,3 +32,4 @@ Use this skill when the task is not a product feature slice but a capability sli
 
 - Read [references/tooling-playbook.md](references/tooling-playbook.md) for the current repo tools and when to use them.
 - Read [references/maintenance-checklist.md](references/maintenance-checklist.md) when doing repo hygiene, rename cleanup, or skill updates.
+- Switch to [../nexum-graph-launch-operator/SKILL.md](../nexum-graph-launch-operator/SKILL.md) when the task is specifically about releases, public GitHub state, or launch-day trust surfaces.

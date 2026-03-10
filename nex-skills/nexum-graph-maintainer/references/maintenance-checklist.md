@@ -6,6 +6,7 @@
 2. Remove hard-coded workspace assumptions when Cargo or the filesystem can answer the question.
 3. Add structured output when the tool may be chained by future scripts.
 4. Smoke-test success and failure paths, not just happy-path help text.
+5. For public GitHub or release tooling, test against the live unauthenticated API surface the repo will actually use.
 
 ## Skill Changes
 

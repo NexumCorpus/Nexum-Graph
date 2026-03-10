@@ -5,10 +5,10 @@
 // Phase 3: `nex log`, `nex rollback`
 
 use clap::Parser;
-use nex_cli::cli::{AuditCommands, AuthCommands, Cli, Commands};
+use nex_cli::cli::{AuditCommands, AuthCommands, Cli, Commands, GithubCommands};
 use nex_cli::{
     audit_pipeline, auth_pipeline, check_pipeline, coordination_pipeline, demo_pipeline,
-    eventlog_pipeline, output, serve_pipeline, start_pipeline,
+    eventlog_pipeline, github_pipeline, output, serve_pipeline, start_pipeline,
 };
 
 #[tokio::main]
@@ -272,6 +272,68 @@ async fn main() {
                 std::process::exit(1);
             }
         }
+        Commands::Github { command } => match command {
+            GithubCommands::Init {
+                repo_path,
+                workflow_name,
+                gate_mode,
+                force,
+                no_pr_comment,
+                no_sarif,
+                format,
+            } => {
+                let repo = repo_path.as_deref().unwrap_or(std::path::Path::new("."));
+                match github_pipeline::run_github_init(
+                    repo,
+                    &workflow_name,
+                    &gate_mode,
+                    !no_pr_comment,
+                    !no_sarif,
+                    force,
+                ) {
+                    Ok(result) => {
+                        let out = output::format_github_init_result(&result, &format);
+                        println!("{out}");
+                    }
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        std::process::exit(1);
+                    }
+                }
+            }
+            GithubCommands::Status {
+                repo_path,
+                require_managed,
+                require_current,
+                min_gate_mode,
+                require_pr_comment,
+                require_sarif,
+                format,
+            } => {
+                let repo = repo_path.as_deref().unwrap_or(std::path::Path::new("."));
+                match github_pipeline::run_github_status(repo) {
+                    Ok(result) => {
+                        let out = output::format_github_status(&result, &format);
+                        println!("{out}");
+                        if let Err(e) = github_pipeline::verify_github_status(
+                            &result,
+                            require_managed,
+                            require_current,
+                            min_gate_mode.as_deref(),
+                            require_pr_comment,
+                            require_sarif,
+                        ) {
+                            eprintln!("error: {e}");
+                            std::process::exit(1);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        std::process::exit(1);
+                    }
+                }
+            }
+        },
         Commands::Auth { command } => match command {
             AuthCommands::Init {
                 agents,

@@ -7,6 +7,7 @@ pub mod cli;
 pub mod coordination_pipeline;
 pub mod demo_pipeline;
 pub mod eventlog_pipeline;
+pub mod github_pipeline;
 pub mod output;
 pub mod pipeline;
 pub mod serve_pipeline;

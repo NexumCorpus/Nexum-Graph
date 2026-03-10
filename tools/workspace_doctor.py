@@ -27,6 +27,7 @@ OPTIONAL_COMMANDS = {
 }
 
 EXPECTED_SKILLS = [
+    "nexum-graph-launch-operator",
     "nexum-graph-sprint",
     "nexum-graph-maintainer",
 ]

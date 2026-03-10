@@ -1,0 +1,186 @@
+name: Reusable Semantic Check
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "Release version in X.Y.Z or vX.Y.Z form. Defaults to the workflow ref."
+        required: false
+        type: string
+      repo-path:
+        description: "Path to the git repository to analyze."
+        required: false
+        type: string
+        default: "."
+      format:
+        description: "nex check output format for the summary artifact and PR comment."
+        required: false
+        type: string
+        default: "github"
+      gate-mode:
+        description: "Merge gate policy: strict, errors-only, or advisory."
+        required: false
+        type: string
+        default: "strict"
+      artifact-name:
+        description: "Artifact name for uploaded reports."
+        required: false
+        type: string
+        default: "nexum-graph-semantic-report"
+      post-pr-comment:
+        description: "Post or update the sticky PR comment when running on pull_request."
+        required: false
+        type: boolean
+        default: true
+      upload-sarif:
+        description: "Upload the generated SARIF report to GitHub code scanning."
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: write
+
+jobs:
+  semantic-check:
+    name: nex check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout target repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: resolve-source
+        name: Resolve Nexum Graph action source
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          workflow_ref="${{ github.workflow_ref }}"
+          repo="${workflow_ref%%/.github/workflows/*}"
+          ref="${workflow_ref#*@}"
+
+          requested_version="${{ inputs.version }}"
+          if [ -n "$requested_version" ]; then
+            normalized_version=$(printf '%s' "$requested_version" | sed -E 's/^v//')
+            ref="refs/tags/v$normalized_version"
+          fi
+
+          {
+            printf 'repo=%s\n' "$repo"
+            printf 'ref=%s\n' "$ref"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Checkout Nexum Graph action source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.resolve-source.outputs.repo }}
+          ref: ${{ steps.resolve-source.outputs.ref }}
+          path: .nexum-graph-action
+          fetch-depth: 1
+
+      - id: semantic
+        name: Run Nexum Graph semantic check
+        continue-on-error: true
+        uses: ./.nexum-graph-action
+        with:
+          version: ${{ inputs.version }}
+          repo-path: ${{ inputs.repo-path }}
+          format: ${{ inputs.format }}
+          gate-mode: ${{ inputs.gate-mode }}
+          html-report-path: ${{ runner.temp }}/nex-check-report.html
+          sarif-report-path: ${{ runner.temp }}/nex-check-report.sarif.json
+
+      - name: Upload semantic report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: |
+            ${{ steps.semantic.outputs.summary-path }}
+            ${{ steps.semantic.outputs.html-report-path }}
+            ${{ steps.semantic.outputs.sarif-report-path }}
+            ${{ steps.semantic.outputs.insights-path }}
+          if-no-files-found: error
+
+      - name: Upload SARIF to code scanning
+        if: always() && inputs.upload-sarif
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ steps.semantic.outputs.sarif-report-path }}
+
+      - name: Post sticky PR summary
+        if: always() && inputs.post-pr-comment && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        env:
+          SUMMARY_PATH: ${{ steps.semantic.outputs.summary-path }}
+          ARTIFACT_NAME: ${{ inputs.artifact-name }}
+          GATE_EXIT_CODE: ${{ steps.semantic.outputs.gate-exit-code }}
+          GATE_STATUS: ${{ steps.semantic.outputs.gate-status }}
+          RISK_LABEL: ${{ steps.semantic.outputs.risk-label }}
+          RISK_SCORE: ${{ steps.semantic.outputs.risk-score }}
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- nexum-graph-semantic-check -->';
+            const summaryPath = process.env.SUMMARY_PATH;
+            const artifactName = process.env.ARTIFACT_NAME;
+            const gateExitCode = Number(process.env.GATE_EXIT_CODE || '0');
+            const gateStatus = process.env.GATE_STATUS || 'clean';
+            const riskLabel = process.env.RISK_LABEL || 'Semantic check complete';
+            const riskScore = process.env.RISK_SCORE || '0';
+            const summary = fs.readFileSync(summaryPath, 'utf8').trim();
+            const statusLine = `${riskLabel} (${riskScore}/100)`;
+            const gateLine =
+              gateExitCode === 0
+                ? `Merge gate: ${gateStatus}`
+                : gateStatus === 'warning-blocked'
+                  ? 'Merge gate: warnings detected'
+                  : 'Merge gate: blocking semantic conflicts detected';
+            const body = [
+              marker,
+              '## Nexum Graph Semantic Check',
+              '',
+              `**Status:** ${statusLine}`,
+              `**Gate:** ${gateLine}`,
+              '',
+              `Semantic reports uploaded as workflow artifact: \`${artifactName}\`.`,
+              '',
+              summary,
+            ].join('\n');
+
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number,
+              per_page: 100,
+            });
+            const existing = comments.find(
+              (comment) => comment.user?.type === 'Bot' && comment.body?.includes(marker),
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body,
+              });
+            }
+
+      - name: Fail job if semantic conflicts were found
+        if: always()
+        shell: bash
+        run: exit "${{ steps.semantic.outputs.gate-exit-code }}"

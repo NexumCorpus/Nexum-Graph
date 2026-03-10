@@ -239,6 +239,9 @@ class WorkspaceDoctorTests(unittest.TestCase):
             results = workspace_doctor.check_skills()
 
         labels = {result.label: result for result in results}
+        self.assertEqual(labels["repo_skill:nexum-graph-launch-operator"].status, "ok")
+        self.assertEqual(labels["skill:nexum-graph-launch-operator"].status, "ok")
+        self.assertEqual(labels["skill_sync:nexum-graph-launch-operator"].status, "ok")
         self.assertEqual(labels["repo_skill:nexum-graph-sprint"].status, "ok")
         self.assertEqual(labels["skill:nexum-graph-sprint"].status, "ok")
         self.assertEqual(labels["skill_sync:nexum-graph-sprint"].status, "ok")
@@ -282,9 +285,11 @@ class ToolSelftestTests(unittest.TestCase):
         py_compile = next(command for name, command in steps if name == "py_compile")
         self.assertIn("skill_repo_check", names)
         self.assertIn("fuzz_manifest", names)
+        self.assertIn("repo_skill:nexum-graph-launch-operator", names)
         self.assertIn("repo_skill:nexum-graph-sprint", names)
         self.assertIn("repo_skill:nexum-graph-maintainer", names)
         self.assertNotIn("skill:nexum-graph-sprint", names)
+        self.assertIn("tools/github_release_watch.py", py_compile)
         self.assertIn("tools/project_facts.py", py_compile)
         self.assertNotIn("tools/tool_selftest.py", py_compile)
 

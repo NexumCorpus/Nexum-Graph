@@ -5,6 +5,7 @@ use nex_cli::check_pipeline::{
 use nex_cli::cli::{Cli, Commands};
 use nex_cli::output::format_report;
 use nex_core::{ConflictKind, ConflictReport, SemanticConflict, SemanticUnit, Severity, UnitKind};
+use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 fn sample_unit(id_byte: u8, qualified_name: &str) -> SemanticUnit {
@@ -189,6 +190,146 @@ fn install_check_hook_is_idempotent_when_current_script_is_present() {
 }
 
 #[test]
+fn format_check_text_report_includes_merge_risk_reasons() {
+    let report = ConflictReport {
+        conflicts: vec![
+            SemanticConflict {
+                kind: ConflictKind::ConcurrentBodyEdit { unit: [1; 32] },
+                severity: Severity::Error,
+                unit_a: sample_unit(1, "auth::validate"),
+                unit_b: sample_unit(2, "auth::validate"),
+                description: "Both branches modified auth::validate in incompatible ways.".into(),
+                suggestion: Some("Merge the intended validation behavior before landing.".into()),
+            },
+            SemanticConflict {
+                kind: ConflictKind::DeletedDependency {
+                    deleted: [3; 32],
+                    dependent: [4; 32],
+                },
+                severity: Severity::Warning,
+                unit_a: sample_unit(3, "billing::charge"),
+                unit_b: sample_unit(4, "api::submit_order"),
+                description: "feature/orders still depends on billing::charge.".into(),
+                suggestion: Some("Retarget submit_order before merging.".into()),
+            },
+        ],
+        branch_a: "main".into(),
+        branch_b: "feature/orders".into(),
+        merge_base: "abc123".into(),
+    };
+
+    let text = format_report(&report, "text");
+
+    assert!(text.contains("Merge risk: High merge risk (80/100)"));
+    assert!(text.contains("Why this scored this way:"));
+    assert!(text.contains("Recommended next actions:"));
+    assert!(text.contains("1 blocking semantic error(s) must be resolved before merge."));
+    assert!(text.contains("One branch removed units that the other branch still depends on"));
+    assert!(text.contains("Both branches changed the same semantic unit body"));
+    assert!(text.contains("Manually reconcile concurrent edits on the same semantic unit."));
+}
+
+#[test]
+fn format_check_github_report_includes_merge_risk_reasons() {
+    let report = ConflictReport {
+        conflicts: vec![SemanticConflict {
+            kind: ConflictKind::DeletedDependency {
+                deleted: [3; 32],
+                dependent: [4; 32],
+            },
+            severity: Severity::Warning,
+            unit_a: sample_unit(3, "billing::charge"),
+            unit_b: sample_unit(4, "api::submit_order"),
+            description: "feature/orders still depends on billing::charge.".into(),
+            suggestion: Some("Retarget submit_order before merging.".into()),
+        }],
+        branch_a: "main".into(),
+        branch_b: "feature/orders".into(),
+        merge_base: "abc123".into(),
+    };
+
+    let github = format_report(&report, "github");
+
+    assert!(github.contains("**Merge risk**: **Review recommended** (40/100)"));
+    assert!(github.contains("## Why this scored this way"));
+    assert!(github.contains("## Recommended next actions"));
+    assert!(github.contains("- 1 warning-level semantic conflict(s) still need review."));
+    assert!(github.contains("- One branch removed units that the other branch still depends on"));
+    assert!(
+        github.contains(
+            "- Update or restore callers and dependents that still point at removed units."
+        )
+    );
+}
+
+#[test]
+fn format_check_insights_json_includes_structured_risk_fields() {
+    let report = ConflictReport {
+        conflicts: vec![SemanticConflict {
+            kind: ConflictKind::DeletedDependency {
+                deleted: [3; 32],
+                dependent: [4; 32],
+            },
+            severity: Severity::Warning,
+            unit_a: sample_unit(3, "billing::charge"),
+            unit_b: sample_unit(4, "api::submit_order"),
+            description: "feature/orders still depends on billing::charge.".into(),
+            suggestion: Some("Retarget submit_order before merging.".into()),
+        }],
+        branch_a: "main".into(),
+        branch_b: "feature/orders".into(),
+        merge_base: "abc123".into(),
+    };
+
+    let payload: Value =
+        serde_json::from_str(&format_report(&report, "insights-json")).expect("parse insights");
+
+    assert_eq!(payload["merge_risk"]["label"], "Review recommended");
+    assert_eq!(payload["merge_risk"]["score"], 40);
+    assert_eq!(payload["merge_risk"]["warning_conflicts"], 1);
+    assert_eq!(
+        payload["recommended_actions"][1],
+        "Update or restore callers and dependents that still point at removed units."
+    );
+    assert_eq!(payload["report"]["branch_a"], "main");
+}
+
+#[test]
+fn format_check_sarif_includes_results_and_rule_ids() {
+    let report = ConflictReport {
+        conflicts: vec![SemanticConflict {
+            kind: ConflictKind::DeletedDependency {
+                deleted: [3; 32],
+                dependent: [4; 32],
+            },
+            severity: Severity::Warning,
+            unit_a: sample_unit(3, "billing::charge"),
+            unit_b: sample_unit(4, "api::submit_order"),
+            description: "feature/orders still depends on billing::charge.".into(),
+            suggestion: Some("Retarget submit_order before merging.".into()),
+        }],
+        branch_a: "main".into(),
+        branch_b: "feature/orders".into(),
+        merge_base: "abc123".into(),
+    };
+
+    let payload: Value =
+        serde_json::from_str(&format_report(&report, "sarif")).expect("parse sarif");
+
+    assert_eq!(payload["version"], "2.1.0");
+    assert_eq!(payload["runs"][0]["tool"]["driver"]["name"], "Nexum Graph");
+    assert_eq!(
+        payload["runs"][0]["results"][0]["ruleId"],
+        "nex.deleted-dependency"
+    );
+    assert_eq!(payload["runs"][0]["results"][0]["level"], "warning");
+    assert_eq!(
+        payload["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"],
+        "src/lib.rs"
+    );
+}
+
+#[test]
 fn format_check_html_report_has_visual_sections() {
     let report = ConflictReport {
         conflicts: vec![SemanticConflict {
@@ -209,6 +350,7 @@ fn format_check_html_report_has_visual_sections() {
     assert!(html.starts_with("<!DOCTYPE html>"));
     assert!(html.contains("Nexum Graph Semantic Check"));
     assert!(html.contains("Merge risk score"));
+    assert!(html.contains("How to unblock this merge"));
     assert!(html.contains("Both branches modified auth::validate in incompatible ways."));
     assert!(html.contains("Suggested move"));
 }

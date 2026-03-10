@@ -4,6 +4,9 @@ Latest product-facing updates for the public repo.
 
 ## Latest
 
+- GitHub rollout posture is now explicit: `nex github status` reports whether a repo is missing the PR gate, using a custom workflow, pinned to an old release, still advisory-only, missing review surfaces, or fully branch-protection ready
+- `nex github status` can now enforce rollout policy in local checks or CI with `--require-current`, `--min-gate-mode`, `--require-pr-comment`, and `--require-sarif`
+- `nex start` now understands the same GitHub rollout stages and points operators at the exact upgrade command for stale, advisory, or partially configured PR gates
 - One-step installers for macOS, Linux, and Windows via [install.sh](./install.sh) and [install.ps1](./install.ps1)
 - GitHub Release automation, bundled binaries, checksum manifests, and packaged VS Code extension artifacts
 - A published semantic-check GitHub Action in [action.yml](./action.yml)
@@ -37,6 +40,8 @@ nex start
 
 ```bash
 nex check --install-hook
+nex github init --gate-mode errors-only
+nex github status --require-current --min-gate-mode errors-only --require-pr-comment --require-sarif
 ```
 
 4. Explore the current semantic diff

@@ -12,11 +12,13 @@ from pathlib import Path
 
 TOOLS = [
     "tools/export_spec_markdown.py",
+    "tools/github_release_watch.py",
     "tools/project_facts.py",
     "tools/release_tools.py",
     "tools/spec_query.py",
     "tools/sync_nex_skills.py",
     "tools/test_project_facts.py",
+    "tools/test_github_release_watch.py",
     "tools/test_skill_sync.py",
     "tools/verify_slice.py",
     "tools/workspace_doctor.py",
@@ -24,11 +26,13 @@ TOOLS = [
 ]
 
 REPO_SKILLS = [
+    "nex-skills/nexum-graph-launch-operator",
     "nex-skills/nexum-graph-sprint",
     "nex-skills/nexum-graph-maintainer",
 ]
 
 SKILLS = [
+    Path.home() / ".codex" / "skills" / "nexum-graph-launch-operator",
     Path.home() / ".codex" / "skills" / "nexum-graph-sprint",
     Path.home() / ".codex" / "skills" / "nexum-graph-maintainer",
 ]

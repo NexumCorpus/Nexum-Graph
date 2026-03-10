@@ -1,0 +1,4 @@
+interface:
+  display_name: "Nexum Graph Launch Operator"
+  short_description: "Manage releases and public repo trust"
+  default_prompt: "Use $nexum-graph-launch-operator to inspect public GitHub state, monitor releases, and fix Nexum Graph launch or distribution issues."

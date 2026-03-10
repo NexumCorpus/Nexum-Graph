@@ -6,6 +6,8 @@
   Use first when you need a health snapshot of commands, docs, skills, dirty files, or impacted crates.
 - `python tools/spec_query.py`
   Use for implementation-plan lookups instead of opening `.docx` internals directly.
+- `python tools/github_release_watch.py`
+  Use when public GitHub state, release progress, or tagged asset publication needs to be verified from the repo instead of a browser tab.
 - `python tools/verify_slice.py`
   Use for crate-scoped verification. Prefer `--changed` for dirty work and `--since <rev>` for branch-relative checks.
 - `python tools/tool_selftest.py`
@@ -19,10 +21,13 @@
   Use for product and architecture slices across the workspace.
 - `nexum-graph-maintainer`
   Use for toolsmithing, workflow hardening, skill updates, and rename hygiene.
+- `nexum-graph-launch-operator`
+  Use for release monitoring, public-state validation, and launch-day trust fixes.
 
 ## Validation Commands
 
 - Repo skill validation:
+  `python C:\Users\dalea\.codex\skills\.system\skill-creator\scripts\quick_validate.py nex-skills\nexum-graph-launch-operator`
   `python C:\Users\dalea\.codex\skills\.system\skill-creator\scripts\quick_validate.py nex-skills\nexum-graph-sprint`
   `python C:\Users\dalea\.codex\skills\.system\skill-creator\scripts\quick_validate.py nex-skills\nexum-graph-maintainer`
 - Skill drift check:

@@ -19,8 +19,14 @@ use crate::auth_pipeline::{
 };
 use crate::check_pipeline::{CheckHookInstallResult, CheckHookInstallStatus};
 use crate::demo_pipeline::DemoReport;
+use crate::github_pipeline::{
+    GitHubWorkflowInitResult, GitHubWorkflowRolloutStage, GitHubWorkflowStatus,
+    assess_github_status,
+};
 use crate::start_pipeline::{StartReport, StartStepStatus};
 use nex_core::{ChangeKind, ConflictKind, ConflictReport, SemanticDiff, Severity};
+use serde::Serialize;
+use serde_json::json;
 use std::fmt::Write;
 
 pub fn format_demo_report(report: &DemoReport, format: &str) -> String {
@@ -365,16 +371,154 @@ fn format_github(diff: &SemanticDiff) -> String {
 
 /// Format a ConflictReport according to the requested format string.
 ///
-/// Supported formats: "json", "text", "github".
+/// Supported formats: "json", "insights-json", "sarif", "text", "github", and "html".
 /// Unknown formats fall back to "text".
 pub fn format_report(report: &ConflictReport, format: &str) -> String {
     match format {
         "json" => serde_json::to_string_pretty(report)
             .unwrap_or_else(|err| format!("{{\"error\": \"{err}\"}}")),
+        "insights-json" => format_report_insights_json(report),
+        "sarif" => format_report_sarif(report),
         "github" => format_report_github(report),
         "html" => format_report_html(report),
         _ => format_report_text(report),
     }
+}
+
+#[derive(Serialize)]
+struct ConflictReportInsights<'a> {
+    report: &'a ConflictReport,
+    merge_risk: ConflictMergeRiskInsights,
+    recommended_actions: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct ConflictMergeRiskInsights {
+    label: String,
+    score: usize,
+    summary: String,
+    reasons: Vec<String>,
+    blocking_conflicts: usize,
+    warning_conflicts: usize,
+    exit_code: i32,
+}
+
+fn format_report_insights_json(report: &ConflictReport) -> String {
+    let insights = ConflictReportInsights {
+        report,
+        merge_risk: ConflictMergeRiskInsights {
+            label: report.risk_label().to_string(),
+            score: report.risk_score(),
+            summary: report.risk_summary(),
+            reasons: report.risk_reasons(),
+            blocking_conflicts: report.error_count(),
+            warning_conflicts: report.warning_count(),
+            exit_code: report.exit_code(),
+        },
+        recommended_actions: report.recommended_actions(),
+    };
+    serde_json::to_string_pretty(&insights)
+        .unwrap_or_else(|err| format!("{{\"error\": \"{err}\"}}"))
+}
+
+fn format_report_sarif(report: &ConflictReport) -> String {
+    let rules = report
+        .conflicts
+        .iter()
+        .map(|conflict| {
+            json!({
+                "id": conflict_kind_rule_id(&conflict.kind),
+                "name": conflict_kind_label(&conflict.kind),
+                "shortDescription": {
+                    "text": conflict_kind_label(&conflict.kind),
+                },
+                "fullDescription": {
+                    "text": conflict.description,
+                },
+                "help": {
+                    "text": conflict
+                        .suggestion
+                        .clone()
+                        .unwrap_or_else(|| "Review the semantic conflict and reconcile the branches before merge.".to_string()),
+                },
+                "properties": {
+                    "tags": ["semantic-merge", "multi-agent", "nexum-graph"],
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let results = report
+        .conflicts
+        .iter()
+        .enumerate()
+        .map(|(index, conflict)| {
+            let mut locations = vec![json!({
+                "physicalLocation": {
+                    "artifactLocation": {
+                        "uri": conflict.unit_a.file_path.display().to_string(),
+                    }
+                }
+            })];
+            if conflict.unit_b.file_path != conflict.unit_a.file_path
+                || conflict.unit_b.qualified_name != conflict.unit_a.qualified_name
+            {
+                locations.push(json!({
+                    "physicalLocation": {
+                        "artifactLocation": {
+                            "uri": conflict.unit_b.file_path.display().to_string(),
+                        }
+                    }
+                }));
+            }
+
+            json!({
+                "ruleId": conflict_kind_rule_id(&conflict.kind),
+                "ruleIndex": index,
+                "level": severity_sarif_level(conflict.severity),
+                "message": {
+                    "text": conflict.description,
+                },
+                "locations": locations,
+                "partialFingerprints": {
+                    "primaryLocationLineHash": format!(
+                        "{}:{}:{}",
+                        conflict_kind_rule_id(&conflict.kind),
+                        conflict.unit_a.qualified_name,
+                        conflict.unit_b.qualified_name
+                    ),
+                },
+                "properties": {
+                    "branchA": report.branch_a,
+                    "branchB": report.branch_b,
+                    "mergeBase": report.merge_base,
+                    "severity": severity_label(conflict.severity),
+                    "suggestion": conflict.suggestion,
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+
+    serde_json::to_string_pretty(&json!({
+        "version": "2.1.0",
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "runs": [{
+            "tool": {
+                "driver": {
+                    "name": "Nexum Graph",
+                    "fullName": "Nexum Graph Semantic Check",
+                    "informationUri": "https://github.com/NexumCorpus/Nexum-Graph",
+                    "semanticVersion": env!("CARGO_PKG_VERSION"),
+                    "rules": rules,
+                }
+            },
+            "invocations": [{
+                "executionSuccessful": report.exit_code() <= 2,
+            }],
+            "results": results,
+        }]
+    }))
+    .unwrap_or_else(|err| format!("{{\"error\": \"{err}\"}}"))
 }
 
 fn join_changes(changes: &[ChangeKind]) -> String {
@@ -395,6 +539,8 @@ fn change_label(change: &ChangeKind) -> &'static str {
 
 fn format_report_text(report: &ConflictReport) -> String {
     let mut output = String::new();
+    let risk_reasons = report.risk_reasons();
+    let recommended_actions = report.recommended_actions();
     let _ = writeln!(
         output,
         "Conflict Check: {} vs {}",
@@ -402,10 +548,35 @@ fn format_report_text(report: &ConflictReport) -> String {
     );
     let _ = writeln!(output, "Merge base: {}", report.merge_base);
     let _ = writeln!(output, "=====================================");
+    let _ = writeln!(
+        output,
+        "Merge risk: {} ({}/100)",
+        report.risk_label(),
+        report.risk_score()
+    );
+    let _ = writeln!(output, "Summary: {}", report.risk_summary());
     let _ = writeln!(output, "Errors:   {}", report.error_count());
     let _ = writeln!(output, "Warnings: {}", report.warning_count());
 
+    if !risk_reasons.is_empty() {
+        let _ = writeln!(output);
+        let _ = writeln!(output, "Why this scored this way:");
+        for reason in &risk_reasons {
+            let _ = writeln!(output, "  - {reason}");
+        }
+    }
+
+    if !recommended_actions.is_empty() {
+        let _ = writeln!(output);
+        let _ = writeln!(output, "Recommended next actions:");
+        for action in &recommended_actions {
+            let _ = writeln!(output, "  - {action}");
+        }
+    }
+
     if !report.conflicts.is_empty() {
+        let _ = writeln!(output);
+        let _ = writeln!(output, "Conflicts:");
         let _ = writeln!(output);
     }
 
@@ -429,6 +600,8 @@ fn format_report_text(report: &ConflictReport) -> String {
 
 fn format_report_github(report: &ConflictReport) -> String {
     let mut output = String::new();
+    let risk_reasons = report.risk_reasons();
+    let recommended_actions = report.recommended_actions();
     let _ = writeln!(output, "# Conflict Check");
     let _ = writeln!(output);
     let _ = writeln!(
@@ -437,11 +610,34 @@ fn format_report_github(report: &ConflictReport) -> String {
         report.branch_a, report.branch_b
     );
     let _ = writeln!(output, "**Merge base**: `{}`", report.merge_base);
+    let _ = writeln!(
+        output,
+        "**Merge risk**: **{}** ({}/100)",
+        report.risk_label(),
+        report.risk_score()
+    );
+    let _ = writeln!(output, "_{}_", report.risk_summary());
     let _ = writeln!(output);
     let _ = writeln!(output, "| Severity | Count |");
     let _ = writeln!(output, "|----------|-------|");
     let _ = writeln!(output, "| Error | {} |", report.error_count());
     let _ = writeln!(output, "| Warning | {} |", report.warning_count());
+
+    if !risk_reasons.is_empty() {
+        let _ = writeln!(output);
+        let _ = writeln!(output, "## Why this scored this way");
+        for reason in &risk_reasons {
+            let _ = writeln!(output, "- {reason}");
+        }
+    }
+
+    if !recommended_actions.is_empty() {
+        let _ = writeln!(output);
+        let _ = writeln!(output, "## Recommended next actions");
+        for action in &recommended_actions {
+            let _ = writeln!(output, "- {action}");
+        }
+    }
 
     if !report.conflicts.is_empty() {
         let _ = writeln!(output);
@@ -490,6 +686,156 @@ pub fn format_check_hook_install_result(result: &CheckHookInstallResult, format:
             );
             output
         }
+    }
+}
+
+pub fn format_github_init_result(result: &GitHubWorkflowInitResult, format: &str) -> String {
+    match format {
+        "json" => serde_json::to_string_pretty(result)
+            .unwrap_or_else(|err| format!("{{\"error\": \"{err}\"}}")),
+        _ => {
+            let mut output = String::new();
+            let _ = writeln!(output, "GitHub semantic check workflow");
+            let _ = writeln!(output, "==============================");
+            let _ = writeln!(output, "Repo: {}", result.repo_path.display());
+            let _ = writeln!(output, "Workflow: {}", result.workflow_path.display());
+            let _ = writeln!(output, "Name: {}", result.workflow_name);
+            let _ = writeln!(output, "Gate mode: {}", result.gate_mode);
+            let _ = writeln!(
+                output,
+                "PR comment: {}",
+                if result.post_pr_comment {
+                    "enabled"
+                } else {
+                    "disabled"
+                }
+            );
+            let _ = writeln!(
+                output,
+                "SARIF upload: {}",
+                if result.upload_sarif {
+                    "enabled"
+                } else {
+                    "disabled"
+                }
+            );
+            let _ = writeln!(
+                output,
+                "Status: {}",
+                if result.replaced_existing {
+                    "updated existing workflow"
+                } else {
+                    "created new workflow"
+                }
+            );
+            let _ = writeln!(output);
+            let _ = writeln!(output, "Next:");
+            let _ = writeln!(output, "  git add {}", result.workflow_path.display());
+            let _ = writeln!(
+                output,
+                "  git commit -m \"Add Nexum Graph semantic PR gate\""
+            );
+            output
+        }
+    }
+}
+
+pub fn format_github_status(result: &GitHubWorkflowStatus, format: &str) -> String {
+    match format {
+        "json" => {
+            let mut value =
+                serde_json::to_value(result).unwrap_or_else(|_| json!({ "error": "serialize" }));
+            if let Some(map) = value.as_object_mut() {
+                map.insert(
+                    "assessment".to_string(),
+                    serde_json::to_value(assess_github_status(result))
+                        .unwrap_or_else(|_| json!({ "error": "serialize" })),
+                );
+            }
+            serde_json::to_string_pretty(&value)
+                .unwrap_or_else(|err| format!("{{\"error\": \"{err}\"}}"))
+        }
+        _ => {
+            let assessment = assess_github_status(result);
+            let mut output = String::new();
+            let _ = writeln!(output, "GitHub semantic check status");
+            let _ = writeln!(output, "============================");
+            let _ = writeln!(output, "Repo: {}", result.repo_path.display());
+            let _ = writeln!(output, "Workflow: {}", result.workflow_path.display());
+            let _ = writeln!(
+                output,
+                "Status: {}",
+                rollout_stage_status_label(assessment.rollout_stage)
+            );
+            let _ = writeln!(
+                output,
+                "Rollout posture: {}",
+                rollout_stage_posture_label(assessment.rollout_stage)
+            );
+            if let Some(name) = &result.workflow_name {
+                let _ = writeln!(output, "Name: {name}");
+            }
+            if let Some(workflow_ref) = &result.workflow_ref {
+                let _ = writeln!(output, "Pinned release: {workflow_ref}");
+                let _ = writeln!(output, "Current release: {}", result.current_ref);
+            }
+            if let Some(gate_mode) = &result.gate_mode {
+                let _ = writeln!(output, "Gate mode: {gate_mode}");
+            }
+            if let Some(post_pr_comment) = result.post_pr_comment {
+                let _ = writeln!(
+                    output,
+                    "PR comment: {}",
+                    if post_pr_comment {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    }
+                );
+            }
+            if let Some(upload_sarif) = result.upload_sarif {
+                let _ = writeln!(
+                    output,
+                    "SARIF upload: {}",
+                    if upload_sarif { "enabled" } else { "disabled" }
+                );
+            }
+            let _ = writeln!(output);
+            let _ = writeln!(output, "Next:");
+            if let Some(command) = &assessment.recommended_command {
+                let _ = writeln!(output, "  {command}");
+            } else {
+                let _ = writeln!(
+                    output,
+                    "  nex github status --require-current --min-gate-mode errors-only --require-pr-comment --require-sarif"
+                );
+            }
+            output
+        }
+    }
+}
+
+fn rollout_stage_status_label(stage: GitHubWorkflowRolloutStage) -> &'static str {
+    match stage {
+        GitHubWorkflowRolloutStage::Missing => "not installed",
+        GitHubWorkflowRolloutStage::Custom => "custom workflow present",
+        GitHubWorkflowRolloutStage::Outdated => "managed by Nexum Graph (update available)",
+        GitHubWorkflowRolloutStage::Advisory => "managed by Nexum Graph (advisory gate)",
+        GitHubWorkflowRolloutStage::LimitedReview => {
+            "managed by Nexum Graph (review surfaces limited)"
+        }
+        GitHubWorkflowRolloutStage::Ready => "managed by Nexum Graph",
+    }
+}
+
+fn rollout_stage_posture_label(stage: GitHubWorkflowRolloutStage) -> &'static str {
+    match stage {
+        GitHubWorkflowRolloutStage::Missing => "not installed",
+        GitHubWorkflowRolloutStage::Custom => "custom workflow",
+        GitHubWorkflowRolloutStage::Outdated => "update required",
+        GitHubWorkflowRolloutStage::Advisory => "visibility only",
+        GitHubWorkflowRolloutStage::LimitedReview => "partial review surface",
+        GitHubWorkflowRolloutStage::Ready => "branch protection ready",
     }
 }
 
@@ -663,7 +1009,12 @@ fn format_demo_report_html(report: &DemoReport) -> String {
 }
 
 fn format_report_html(report: &ConflictReport) -> String {
-    let (risk_label, risk_tone, risk_score, risk_summary) = merge_risk_summary(report);
+    let risk_label = report.risk_label();
+    let risk_tone = merge_risk_tone(report);
+    let risk_score = report.risk_score();
+    let risk_summary = report.risk_summary();
+    let risk_reasons = report.risk_reasons();
+    let recommended_actions = report.recommended_actions();
     let metrics = vec![
         HtmlMetric {
             label: "Merge base",
@@ -707,7 +1058,24 @@ fn format_report_html(report: &ConflictReport) -> String {
     overview.push_str(
         "<div class=\"keyline\"><strong>What this means:</strong> Nexum Graph is comparing branch-level semantic diffs, not just text patches.</div>",
     );
+    if !risk_reasons.is_empty() {
+        overview.push_str("<div class=\"bullet-list\">");
+        for reason in &risk_reasons {
+            let _ = writeln!(overview, "<div>{}</div>", escape_html(reason));
+        }
+        overview.push_str("</div>");
+    }
     overview.push_str("</section>");
+
+    let mut next_actions = String::new();
+    next_actions.push_str("<section class=\"section\">");
+    next_actions.push_str("<span class=\"section-kicker\">Recommended next actions</span>");
+    next_actions.push_str("<h2>How to unblock this merge</h2>");
+    next_actions.push_str("<div class=\"bullet-list\">");
+    for action in &recommended_actions {
+        let _ = writeln!(next_actions, "<div>{}</div>", escape_html(action));
+    }
+    next_actions.push_str("</div></section>");
 
     let mut conflicts = String::new();
     conflicts.push_str("<section class=\"section\">");
@@ -751,12 +1119,12 @@ fn format_report_html(report: &ConflictReport) -> String {
         &format!(
             "<span class=\"badge {tone}\">{label}</span><span class=\"score\">Merge risk score {score}/100</span><p class=\"hero-copy\">{summary}</p>",
             tone = risk_tone,
-            label = escape_html(&risk_label),
+            label = escape_html(risk_label),
             score = risk_score,
             summary = escape_html(&risk_summary),
         ),
         &metrics,
-        &[overview, conflicts],
+        &[overview, next_actions, conflicts],
     )
 }
 
@@ -1137,40 +1505,13 @@ h1 {
     output
 }
 
-fn merge_risk_summary(report: &ConflictReport) -> (String, &'static str, usize, String) {
-    let errors = report.error_count();
-    let warnings = report.warning_count();
-    let score = (errors.saturating_mul(45) + warnings.saturating_mul(18)).min(100);
-    if errors > 0 {
-        (
-            "High merge risk".to_string(),
-            "critical",
-            score.max(80),
-            format!(
-                "{} blocking semantic error(s) detected across {} and {}.",
-                errors, report.branch_a, report.branch_b
-            ),
-        )
-    } else if warnings > 0 {
-        (
-            "Review recommended".to_string(),
-            "warning",
-            score.max(40),
-            format!(
-                "{} warning-level semantic conflict(s) detected. Merge is possible, but it is not clean.",
-                warnings
-            ),
-        )
+fn merge_risk_tone(report: &ConflictReport) -> &'static str {
+    if report.error_count() > 0 {
+        "critical"
+    } else if report.warning_count() > 0 {
+        "warning"
     } else {
-        (
-            "Clean semantic check".to_string(),
-            "positive",
-            0,
-            format!(
-                "No blocking semantic conflicts detected between {} and {}.",
-                report.branch_a, report.branch_b
-            ),
-        )
+        "positive"
     }
 }
 
@@ -1264,6 +1605,25 @@ fn conflict_kind_label(kind: &ConflictKind) -> &'static str {
         ConflictKind::DeletedDependency { .. } => "DeletedDependency",
         ConflictKind::NamingCollision { .. } => "NamingCollision",
         ConflictKind::InterfaceDrift { .. } => "InterfaceDrift",
+    }
+}
+
+fn conflict_kind_rule_id(kind: &ConflictKind) -> &'static str {
+    match kind {
+        ConflictKind::BrokenReference { .. } => "nex.broken-reference",
+        ConflictKind::ConcurrentBodyEdit { .. } => "nex.concurrent-body-edit",
+        ConflictKind::SignatureMismatch { .. } => "nex.signature-mismatch",
+        ConflictKind::DeletedDependency { .. } => "nex.deleted-dependency",
+        ConflictKind::NamingCollision { .. } => "nex.naming-collision",
+        ConflictKind::InterfaceDrift { .. } => "nex.interface-drift",
+    }
+}
+
+fn severity_sarif_level(severity: Severity) -> &'static str {
+    match severity {
+        Severity::Info => "note",
+        Severity::Warning => "warning",
+        Severity::Error => "error",
     }
 }
 

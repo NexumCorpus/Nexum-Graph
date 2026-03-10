@@ -67,7 +67,7 @@ pub enum Commands {
         /// Path to the git repository (defaults to ".").
         #[arg(long)]
         repo_path: Option<PathBuf>,
-        /// Output format: json, text, github, or html.
+        /// Output format: json, insights-json, sarif, text, github, or html.
         #[arg(long, default_value = "text")]
         format: String,
         /// Install a local git pre-merge hook that runs `nex check`.
@@ -186,6 +186,11 @@ pub enum Commands {
         #[arg(long)]
         repo_path: Option<PathBuf>,
     },
+    /// Scaffold GitHub PR workflow integration for Nexum Graph.
+    Github {
+        #[command(subcommand)]
+        command: GithubCommands,
+    },
     /// Manage server auth bootstrap, issuance, and revocation.
     Auth {
         #[command(subcommand)]
@@ -260,6 +265,58 @@ pub enum AuthCommands {
         /// Optional auth config path override.
         #[arg(long)]
         auth_config: Option<PathBuf>,
+        /// Output format: json or text.
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum GithubCommands {
+    /// Write a reusable GitHub workflow that runs Nexum Graph on pull requests.
+    Init {
+        /// Path to the git repository (defaults to ".").
+        #[arg(long)]
+        repo_path: Option<PathBuf>,
+        /// Workflow display name.
+        #[arg(long, default_value = "Semantic Check")]
+        workflow_name: String,
+        /// Merge gate policy: strict, errors-only, or advisory.
+        #[arg(long, default_value = "errors-only")]
+        gate_mode: String,
+        /// Replace an existing workflow file if present.
+        #[arg(long, default_value_t = false)]
+        force: bool,
+        /// Disable the sticky PR comment in the generated workflow.
+        #[arg(long, default_value_t = false)]
+        no_pr_comment: bool,
+        /// Disable SARIF upload in the generated workflow.
+        #[arg(long, default_value_t = false)]
+        no_sarif: bool,
+        /// Output format: json or text.
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// Inspect the current repo's Nexum Graph GitHub workflow state.
+    Status {
+        /// Path to the git repository (defaults to ".").
+        #[arg(long)]
+        repo_path: Option<PathBuf>,
+        /// Exit non-zero unless the repo is using the managed Nexum Graph workflow.
+        #[arg(long, default_value_t = false)]
+        require_managed: bool,
+        /// Exit non-zero unless the repo is using the current Nexum Graph workflow release.
+        #[arg(long, default_value_t = false)]
+        require_current: bool,
+        /// Exit non-zero unless the workflow gate mode is at least this strictness.
+        #[arg(long)]
+        min_gate_mode: Option<String>,
+        /// Exit non-zero unless the managed workflow has the sticky PR comment enabled.
+        #[arg(long, default_value_t = false)]
+        require_pr_comment: bool,
+        /// Exit non-zero unless the managed workflow uploads SARIF for code scanning.
+        #[arg(long, default_value_t = false)]
+        require_sarif: bool,
         /// Output format: json or text.
         #[arg(long, default_value = "text")]
         format: String,

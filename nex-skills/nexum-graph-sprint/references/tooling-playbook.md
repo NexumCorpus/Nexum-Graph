@@ -32,3 +32,8 @@
 
 - Use `python tools/sync_nex_skills.py` after editing `nex-skills/` to install or refresh the local copies under `$CODEX_HOME/skills`.
 - Use `python tools/sync_nex_skills.py --check` to detect local drift without writing.
+
+## Public Release Checks
+
+- Use `python tools/github_release_watch.py public-summary` when public GitHub state matters to the slice.
+- Use `python tools/github_release_watch.py release-status --tag vX.Y.Z` when a sprint task touches releases, asset publication, or launch trust.
