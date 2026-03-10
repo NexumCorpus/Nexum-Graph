@@ -1,0 +1,32 @@
+[package]
+name = "nex-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+description = "libFuzzer targets for Nexum Graph core contracts"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+arbitrary = { version = "1", features = ["derive"] }
+blake3 = "1"
+libfuzzer-sys = "0.4"
+nex-core = { path = "../crates/nex-core" }
+nex-graph = { path = "../crates/nex-graph" }
+nex-parse = { path = "../crates/nex-parse" }
+
+[[bin]]
+name = "semantic_pipeline"
+path = "fuzz_targets/semantic_pipeline.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "graph_diff"
+path = "fuzz_targets/graph_diff.rs"
+test = false
+doc = false
+
+[workspace]
+members = ["."]

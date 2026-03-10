@@ -11,9 +11,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 TOOLS = [
+    "tools/project_facts.py",
     "tools/release_tools.py",
     "tools/spec_query.py",
     "tools/sync_nex_skills.py",
+    "tools/test_project_facts.py",
     "tools/test_skill_sync.py",
     "tools/verify_slice.py",
     "tools/workspace_doctor.py",
@@ -95,6 +97,7 @@ def build_steps(skip_skills: bool) -> list[tuple[str, list[str]]]:
         ),
         ("skill_repo_check", [sys.executable, "tools/sync_nex_skills.py", "--check", "--json"]),
         ("workspace_doctor", [sys.executable, "tools/workspace_doctor.py", "--json"]),
+        ("fuzz_manifest", ["cargo", "check", "--manifest-path", "fuzz/Cargo.toml", "--bins"]),
     ]
 
     for skill_dir in REPO_SKILLS:

@@ -1,9 +1,10 @@
 //! Output formatting for semantic diffs.
 //!
-//! Supports three formats:
+//! Supports multiple formats:
 //! - `json`: Machine-readable JSON via serde_json
 //! - `text`: Human-readable summary
 //! - `github`: GitHub-flavored markdown for PR comments
+//! - `html`: Visual report for sharing and artifact publishing
 
 use crate::audit_pipeline::AuditVerificationReport;
 use crate::auth_pipeline::{
@@ -19,6 +20,7 @@ pub fn format_demo_report(report: &DemoReport, format: &str) -> String {
     match format {
         "json" => serde_json::to_string_pretty(report)
             .unwrap_or_else(|err| format!("{{\"error\": \"{err}\"}}")),
+        "html" => format_demo_report_html(report),
         _ => {
             let mut output = String::new();
             let _ = writeln!(output, "Nexum Graph Demo");
@@ -93,6 +95,7 @@ pub fn format_start_report(report: &StartReport, format: &str) -> String {
     match format {
         "json" => serde_json::to_string_pretty(report)
             .unwrap_or_else(|err| format!("{{\"error\": \"{err}\"}}")),
+        "html" => format_start_report_html(report),
         _ => {
             let mut output = String::new();
             let _ = writeln!(output, "Nexum Graph Start");
@@ -189,7 +192,7 @@ pub fn format_start_report(report: &StartReport, format: &str) -> String {
 
 /// Format a SemanticDiff according to the requested format string.
 ///
-/// Supported formats: "json", "text", "github".
+/// Supported formats: "json", "text", and "github".
 /// Unknown formats fall back to "text".
 pub fn format_diff(diff: &SemanticDiff, format: &str) -> String {
     match format {
@@ -362,6 +365,7 @@ pub fn format_report(report: &ConflictReport, format: &str) -> String {
         "json" => serde_json::to_string_pretty(report)
             .unwrap_or_else(|err| format!("{{\"error\": \"{err}\"}}")),
         "github" => format_report_github(report),
+        "html" => format_report_html(report),
         _ => format_report_text(report),
     }
 }
@@ -480,6 +484,753 @@ pub fn format_check_hook_install_result(result: &CheckHookInstallResult, format:
             output
         }
     }
+}
+
+#[derive(Debug, Clone)]
+struct HtmlMetric<'a> {
+    label: &'a str,
+    value: String,
+    tone: &'a str,
+}
+
+fn format_demo_report_html(report: &DemoReport) -> String {
+    let status_tone = if report.warnings.is_empty() {
+        "positive"
+    } else {
+        "warning"
+    };
+    let status_label = if report.current_diff.available {
+        "Snapshot ready"
+    } else {
+        "Snapshot partial"
+    };
+    let status_summary = if report.current_diff.available {
+        "This repository can already be mapped semantically, including a live diff preview from the requested refs."
+    } else {
+        "The repository indexed semantically, but the default diff preview could not be built from the requested refs."
+    };
+    let metrics = vec![
+        HtmlMetric {
+            label: "Languages",
+            value: if report.detected_languages.is_empty() {
+                "0".to_string()
+            } else {
+                report.detected_languages.len().to_string()
+            },
+            tone: "neutral",
+        },
+        HtmlMetric {
+            label: "Indexed files",
+            value: report.indexed_files.to_string(),
+            tone: "neutral",
+        },
+        HtmlMetric {
+            label: "Semantic units",
+            value: report.semantic_units.to_string(),
+            tone: "neutral",
+        },
+        HtmlMetric {
+            label: "Dependency edges",
+            value: report.dependency_edges.to_string(),
+            tone: status_tone,
+        },
+    ];
+
+    let mut overview = String::new();
+    overview.push_str("<section class=\"section\">");
+    overview.push_str("<span class=\"section-kicker\">Repository snapshot</span>");
+    overview.push_str("<h2>What Nexum Graph can see right now</h2>");
+    let _ = writeln!(
+        overview,
+        "<p>Repo: <strong>{repo}</strong><br>Head: <strong>{head}</strong><br>Diff base: <strong>{base}</strong></p>",
+        repo = escape_html(&report.repo_path.display().to_string()),
+        head = escape_html(&report.head_commit),
+        base = escape_html(&report.base_ref),
+    );
+    let _ = writeln!(
+        overview,
+        "<div class=\"keyline\"><strong>Languages detected:</strong> {}</div>",
+        escape_html(&if report.detected_languages.is_empty() {
+            "none".to_string()
+        } else {
+            report.detected_languages.join(", ")
+        })
+    );
+    overview.push_str("</section>");
+
+    let mut diff_preview = String::new();
+    diff_preview.push_str("<section class=\"section\">");
+    diff_preview.push_str("<span class=\"section-kicker\">Diff preview</span>");
+    diff_preview.push_str("<h2>Current semantic change surface</h2>");
+    if report.current_diff.available {
+        let _ = writeln!(
+            diff_preview,
+            "<div class=\"card-grid\"><article class=\"item-card tone-positive\"><div class=\"item-head\"><span class=\"badge positive\">Added</span><span class=\"meta\">{}</span></div><h3>{}</h3></article><article class=\"item-card tone-warning\"><div class=\"item-head\"><span class=\"badge warning\">Modified</span><span class=\"meta\">{}</span></div><h3>{}</h3></article><article class=\"item-card tone-neutral\"><div class=\"item-head\"><span class=\"badge neutral\">Removed</span><span class=\"meta\">{}</span></div><h3>{}</h3></article><article class=\"item-card tone-neutral\"><div class=\"item-head\"><span class=\"badge neutral\">Moved</span><span class=\"meta\">{}</span></div><h3>{}</h3></article></div>",
+            report.current_diff.added,
+            report.current_diff.added,
+            report.current_diff.modified,
+            report.current_diff.modified,
+            report.current_diff.removed,
+            report.current_diff.removed,
+            report.current_diff.moved,
+            report.current_diff.moved,
+        );
+        if !report.current_diff.highlights.is_empty() {
+            diff_preview.push_str("<div class=\"bullet-list\">");
+            for highlight in &report.current_diff.highlights {
+                let _ = writeln!(diff_preview, "<div>{}</div>", escape_html(highlight));
+            }
+            diff_preview.push_str("</div>");
+        }
+    } else if let Some(reason) = &report.current_diff.unavailable_reason {
+        let _ = writeln!(
+            diff_preview,
+            "<div class=\"item-card tone-warning\"><div class=\"item-head\"><span class=\"badge warning\">Unavailable</span><span class=\"meta\">default refs</span></div><h3>Diff preview needs manual refs</h3><p>{}</p></div>",
+            escape_html(reason)
+        );
+    }
+    diff_preview.push_str("</section>");
+
+    let mut workspace_state = String::new();
+    workspace_state.push_str("<section class=\"section\">");
+    workspace_state.push_str("<span class=\"section-kicker\">Operator state</span>");
+    workspace_state.push_str("<h2>Live coordination footprint</h2>");
+    let _ = writeln!(
+        workspace_state,
+        "<p>Active locks: <strong>{}</strong><br>Event log entries: <strong>{}</strong><br>Server auth: <strong>{}</strong></p>",
+        report.active_locks,
+        report.event_count,
+        if report.auth_configured {
+            "configured"
+        } else {
+            "not configured"
+        },
+    );
+    if !report.warnings.is_empty() {
+        workspace_state.push_str("<div class=\"bullet-list warning-list\">");
+        for warning in &report.warnings {
+            let _ = writeln!(workspace_state, "<div>{}</div>", escape_html(warning));
+        }
+        workspace_state.push_str("</div>");
+    }
+    workspace_state.push_str("</section>");
+
+    let mut next_moves = String::new();
+    next_moves.push_str("<section class=\"section\">");
+    next_moves.push_str("<span class=\"section-kicker\">Next moves</span>");
+    next_moves.push_str("<h2>What to run next</h2>");
+    next_moves.push_str("<div class=\"card-grid\">");
+    let _ = writeln!(
+        next_moves,
+        "<article class=\"item-card tone-positive\"><div class=\"item-head\"><span class=\"badge positive\">Guide</span><span class=\"meta\">recommended</span></div><h3>Run the guided setup</h3><p>Turn this raw snapshot into an operator path with merge-hook and auth guidance.</p><code class=\"command\">nex start --base {base} --head {head}</code></article>",
+        base = escape_html(&report.base_ref),
+        head = escape_html(&report.head_ref),
+    );
+    let _ = writeln!(
+        next_moves,
+        "<article class=\"item-card tone-neutral\"><div class=\"item-head\"><span class=\"badge neutral\">Inspect</span><span class=\"meta\">semantic diff</span></div><h3>Open the current diff</h3><p>See the exact semantic units behind this preview instead of only the summary counts.</p><code class=\"command\">nex diff {base} {head}</code></article>",
+        base = escape_html(&report.base_ref),
+        head = escape_html(&report.head_ref),
+    );
+    let _ = writeln!(
+        next_moves,
+        "<article class=\"item-card tone-warning\"><div class=\"item-head\"><span class=\"badge warning\">Protect</span><span class=\"meta\">local merges</span></div><h3>Install the semantic merge guard</h3><p>Make future merges run the branch conflict check automatically before merge commit.</p><code class=\"command\">nex check --install-hook</code></article>",
+    );
+    next_moves.push_str("</div></section>");
+
+    render_html_shell(
+        "Nexum Graph Demo Report",
+        &report.repo_path.display().to_string(),
+        &format!(
+            "<span class=\"badge {tone}\">{label}</span><span class=\"score\">{files} files · {units} semantic units · {edges} dependency edges</span><p class=\"hero-copy\">{summary}</p>",
+            tone = status_tone,
+            label = escape_html(status_label),
+            files = report.indexed_files,
+            units = report.semantic_units,
+            edges = report.dependency_edges,
+            summary = escape_html(status_summary),
+        ),
+        &metrics,
+        &[overview, diff_preview, workspace_state, next_moves],
+    )
+}
+
+fn format_report_html(report: &ConflictReport) -> String {
+    let (risk_label, risk_tone, risk_score, risk_summary) = merge_risk_summary(report);
+    let metrics = vec![
+        HtmlMetric {
+            label: "Merge base",
+            value: escape_html(&report.merge_base),
+            tone: "neutral",
+        },
+        HtmlMetric {
+            label: "Conflicts",
+            value: report.conflicts.len().to_string(),
+            tone: risk_tone,
+        },
+        HtmlMetric {
+            label: "Errors",
+            value: report.error_count().to_string(),
+            tone: if report.error_count() > 0 {
+                "critical"
+            } else {
+                "neutral"
+            },
+        },
+        HtmlMetric {
+            label: "Warnings",
+            value: report.warning_count().to_string(),
+            tone: if report.warning_count() > 0 {
+                "warning"
+            } else {
+                "neutral"
+            },
+        },
+    ];
+
+    let mut overview = String::new();
+    overview.push_str("<section class=\"section\">");
+    overview.push_str("<span class=\"section-kicker\">Semantic merge view</span>");
+    let _ = writeln!(
+        overview,
+        "<h2>{}</h2>",
+        escape_html(&format!("{} vs {}", report.branch_a, report.branch_b))
+    );
+    let _ = writeln!(overview, "<p>{}</p>", escape_html(&risk_summary));
+    overview.push_str(
+        "<div class=\"keyline\"><strong>What this means:</strong> Nexum Graph is comparing branch-level semantic diffs, not just text patches.</div>",
+    );
+    overview.push_str("</section>");
+
+    let mut conflicts = String::new();
+    conflicts.push_str("<section class=\"section\">");
+    conflicts.push_str("<span class=\"section-kicker\">Conflict breakdown</span>");
+    conflicts.push_str("<h2>What would actually collide</h2>");
+    if report.conflicts.is_empty() {
+        conflicts.push_str(
+            "<div class=\"item-card tone-positive\"><div class=\"item-head\"><span class=\"badge positive\">Clean</span><span class=\"meta\">No semantic blockers</span></div><h3>No blocking semantic conflicts detected.</h3><p>This branch pair is currently a good candidate for merge. Keep the semantic hook and PR check turned on so the state stays that way.</p></div>",
+        );
+    } else {
+        conflicts.push_str("<div class=\"card-grid\">");
+        for conflict in &report.conflicts {
+            let _ = writeln!(
+                conflicts,
+                "<article class=\"item-card tone-{tone}\"><div class=\"item-head\"><span class=\"badge {tone}\">{severity}</span><span class=\"meta\">{kind}</span></div><h3>{description}</h3><p><strong>{branch_a}:</strong> {unit_a}<br><strong>{branch_b}:</strong> {unit_b}</p>{suggestion}</article>",
+                tone = severity_tone(conflict.severity),
+                severity = escape_html(severity_title(conflict.severity)),
+                kind = escape_html(conflict_kind_label(&conflict.kind)),
+                description = escape_html(&conflict.description),
+                branch_a = escape_html(&report.branch_a),
+                branch_b = escape_html(&report.branch_b),
+                unit_a = escape_html(&conflict.unit_a.qualified_name),
+                unit_b = escape_html(&conflict.unit_b.qualified_name),
+                suggestion = conflict
+                    .suggestion
+                    .as_ref()
+                    .map(|suggestion| format!(
+                        "<p class=\"suggestion\"><strong>Suggested move:</strong> {}</p>",
+                        escape_html(suggestion)
+                    ))
+                    .unwrap_or_default(),
+            );
+        }
+        conflicts.push_str("</div>");
+    }
+    conflicts.push_str("</section>");
+
+    render_html_shell(
+        "Nexum Graph Semantic Check",
+        &format!("{} vs {}", report.branch_a, report.branch_b),
+        &format!(
+            "<span class=\"badge {tone}\">{label}</span><span class=\"score\">Merge risk score {score}/100</span><p class=\"hero-copy\">{summary}</p>",
+            tone = risk_tone,
+            label = escape_html(&risk_label),
+            score = risk_score,
+            summary = escape_html(&risk_summary),
+        ),
+        &metrics,
+        &[overview, conflicts],
+    )
+}
+
+fn format_start_report_html(report: &StartReport) -> String {
+    let (readiness_label, readiness_tone, readiness_score, readiness_summary) =
+        start_readiness_summary(report);
+    let metrics = vec![
+        HtmlMetric {
+            label: "Languages",
+            value: if report.demo.detected_languages.is_empty() {
+                "0".to_string()
+            } else {
+                report.demo.detected_languages.len().to_string()
+            },
+            tone: "neutral",
+        },
+        HtmlMetric {
+            label: "Indexed files",
+            value: report.demo.indexed_files.to_string(),
+            tone: "neutral",
+        },
+        HtmlMetric {
+            label: "Semantic units",
+            value: report.demo.semantic_units.to_string(),
+            tone: "neutral",
+        },
+        HtmlMetric {
+            label: "Activation score",
+            value: format!("{readiness_score}/100"),
+            tone: readiness_tone,
+        },
+    ];
+
+    let mut next_steps = String::new();
+    next_steps.push_str("<section class=\"section\">");
+    next_steps.push_str("<span class=\"section-kicker\">Operator path</span>");
+    next_steps.push_str("<h2>What to do next</h2>");
+    next_steps.push_str("<div class=\"card-grid\">");
+    for (index, step) in report.next_steps.iter().enumerate() {
+        let tone = start_step_tone(step.status);
+        let _ = writeln!(
+            next_steps,
+            "<article class=\"item-card tone-{tone}\"><div class=\"item-head\"><span class=\"badge {tone}\">{status}</span><span class=\"meta\">Step {index}</span></div><h3>{title}</h3><p>{reason}</p><code class=\"command\">{command}</code></article>",
+            tone = tone,
+            status = escape_html(start_step_status_label(step.status)),
+            index = index + 1,
+            title = escape_html(&step.title),
+            reason = escape_html(&step.reason),
+            command = escape_html(&step.command),
+        );
+    }
+    next_steps.push_str("</div></section>");
+
+    let mut snapshot = String::new();
+    snapshot.push_str("<section class=\"section\">");
+    snapshot.push_str("<span class=\"section-kicker\">Current snapshot</span>");
+    snapshot.push_str("<h2>What Nexum Graph already sees</h2>");
+    let _ = writeln!(
+        snapshot,
+        "<p>{}</p>",
+        escape_html(&format!(
+            "Detected languages: {}. Dependency edges: {}. Active locks: {}. Event log entries: {}.",
+            if report.demo.detected_languages.is_empty() {
+                "none".to_string()
+            } else {
+                report.demo.detected_languages.join(", ")
+            },
+            report.demo.dependency_edges,
+            report.demo.active_locks,
+            report.demo.event_count
+        ))
+    );
+    if report.demo.current_diff.available {
+        let _ = writeln!(
+            snapshot,
+            "<div class=\"keyline\"><strong>Diff preview:</strong> {} added, {} modified, {} removed, {} moved.</div>",
+            report.demo.current_diff.added,
+            report.demo.current_diff.modified,
+            report.demo.current_diff.removed,
+            report.demo.current_diff.moved
+        );
+    } else if let Some(reason) = &report.demo.current_diff.unavailable_reason {
+        let _ = writeln!(
+            snapshot,
+            "<div class=\"keyline\"><strong>Diff preview unavailable:</strong> {}</div>",
+            escape_html(reason)
+        );
+    }
+    if !report.demo.current_diff.highlights.is_empty() {
+        snapshot.push_str("<div class=\"bullet-list\">");
+        for highlight in &report.demo.current_diff.highlights {
+            let _ = writeln!(snapshot, "<div>{}</div>", escape_html(highlight));
+        }
+        snapshot.push_str("</div>");
+    }
+    if !report.demo.warnings.is_empty() {
+        snapshot.push_str("<div class=\"bullet-list warning-list\">");
+        for warning in &report.demo.warnings {
+            let _ = writeln!(snapshot, "<div>{}</div>", escape_html(warning));
+        }
+        snapshot.push_str("</div>");
+    }
+    snapshot.push_str("</section>");
+
+    render_html_shell(
+        "Nexum Graph Start Report",
+        &report.repo_path.display().to_string(),
+        &format!(
+            "<span class=\"badge {tone}\">{label}</span><span class=\"score\">Activation score {score}/100</span><p class=\"hero-copy\">{summary}</p><p class=\"hero-copy\">Merge guard: <strong>{hook}</strong> at {hook_path}. Server auth: <strong>{auth}</strong>.</p>",
+            tone = readiness_tone,
+            label = escape_html(&readiness_label),
+            score = readiness_score,
+            summary = escape_html(&readiness_summary),
+            hook = if report.hook_installed && report.hook_healthy {
+                "ready"
+            } else if report.hook_installed {
+                "custom"
+            } else {
+                "not installed"
+            },
+            hook_path = escape_html(&report.hook_path.display().to_string()),
+            auth = if report.auth_configured {
+                "configured"
+            } else {
+                "not configured"
+            },
+        ),
+        &metrics,
+        &[next_steps, snapshot],
+    )
+}
+
+fn render_html_shell(
+    title: &str,
+    subtitle: &str,
+    hero_status_html: &str,
+    metrics: &[HtmlMetric<'_>],
+    sections: &[String],
+) -> String {
+    let mut output = String::new();
+    output.push_str("<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\">");
+    output.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
+    let _ = writeln!(output, "<title>{}</title>", escape_html(title));
+    output.push_str(
+        r#"<style>
+:root {
+  color-scheme: light;
+  --bg: #f6efe3;
+  --ink: #10263a;
+  --muted: #5c6b78;
+  --panel: rgba(255, 255, 255, 0.82);
+  --line: rgba(16, 38, 58, 0.12);
+  --positive: #0f766e;
+  --warning: #b45309;
+  --critical: #b42318;
+  --neutral: #334155;
+  --shadow: 0 24px 60px rgba(16, 38, 58, 0.14);
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at top left, rgba(217, 119, 6, 0.14), transparent 34rem),
+    radial-gradient(circle at top right, rgba(15, 118, 110, 0.18), transparent 30rem),
+    linear-gradient(180deg, #fbf7f1 0%, var(--bg) 100%);
+}
+.page {
+  width: min(1120px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 40px 0 72px;
+}
+.hero {
+  background: linear-gradient(135deg, rgba(16, 38, 58, 0.96), rgba(16, 90, 99, 0.94));
+  color: #f8f4ed;
+  border-radius: 30px;
+  padding: 32px;
+  box-shadow: var(--shadow);
+}
+.kicker,
+.section-kicker {
+  display: inline-block;
+  font-size: 0.76rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(248, 244, 237, 0.72);
+}
+.section-kicker { color: var(--muted); }
+h1, h2, h3 {
+  margin: 0;
+  font-family: "Iowan Old Style", Georgia, serif;
+  font-weight: 600;
+}
+h1 {
+  margin-top: 10px;
+  font-size: clamp(2.2rem, 4vw, 3.7rem);
+  line-height: 1.02;
+}
+.subtitle {
+  margin: 10px 0 0;
+  font-size: 1rem;
+  color: rgba(248, 244, 237, 0.76);
+}
+.hero-copy {
+  margin: 14px 0 0;
+  max-width: 64ch;
+  line-height: 1.6;
+  color: rgba(248, 244, 237, 0.88);
+}
+.hero-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  margin-top: 20px;
+}
+.score {
+  font-size: 0.92rem;
+  color: rgba(248, 244, 237, 0.84);
+}
+.metrics,
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+}
+.metrics { margin-top: 28px; }
+.metric,
+.section,
+.item-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  box-shadow: var(--shadow);
+}
+.metric {
+  padding: 18px 20px;
+  backdrop-filter: blur(10px);
+}
+.metric-label {
+  font-size: 0.82rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.metric-value {
+  margin-top: 10px;
+  font-size: 1.9rem;
+  line-height: 1;
+}
+.metric.positive .metric-value { color: var(--positive); }
+.metric.warning .metric-value { color: var(--warning); }
+.metric.critical .metric-value { color: var(--critical); }
+.section {
+  margin-top: 22px;
+  padding: 24px;
+  backdrop-filter: blur(10px);
+}
+.section p {
+  color: var(--muted);
+  line-height: 1.65;
+}
+.keyline {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border-left: 4px solid rgba(16, 38, 58, 0.22);
+  background: rgba(255, 255, 255, 0.5);
+  border-radius: 14px;
+}
+.item-card {
+  padding: 18px;
+}
+.item-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+.badge.positive { background: rgba(15, 118, 110, 0.14); color: var(--positive); }
+.badge.warning { background: rgba(180, 83, 9, 0.14); color: var(--warning); }
+.badge.critical { background: rgba(180, 35, 24, 0.14); color: var(--critical); }
+.badge.neutral { background: rgba(51, 65, 85, 0.12); color: var(--neutral); }
+.meta {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.item-card h3 {
+  margin-top: 14px;
+  font-size: 1.25rem;
+}
+.item-card p {
+  margin-bottom: 0;
+}
+.suggestion {
+  margin-top: 14px;
+  color: var(--ink);
+}
+.command {
+  display: block;
+  margin-top: 16px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  border-radius: 16px;
+  background: #132b3a;
+  color: #f8f4ed;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 0.92rem;
+}
+.bullet-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+.bullet-list > div {
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.52);
+  border: 1px solid rgba(16, 38, 58, 0.08);
+}
+.warning-list > div {
+  border-left: 4px solid rgba(180, 83, 9, 0.28);
+}
+.footer {
+  margin-top: 18px;
+  font-size: 0.86rem;
+  color: var(--muted);
+  text-align: center;
+}
+@media (max-width: 720px) {
+  .page { width: min(100% - 20px, 1120px); padding-top: 20px; }
+  .hero { padding: 24px; border-radius: 24px; }
+  .section { padding: 20px; }
+}
+</style>"#,
+    );
+    output.push_str("</head><body><main class=\"page\"><header class=\"hero\">");
+    output.push_str("<span class=\"kicker\">Nexum Graph</span>");
+    let _ = writeln!(output, "<h1>{}</h1>", escape_html(title));
+    let _ = writeln!(
+        output,
+        "<p class=\"subtitle\">{}</p>",
+        escape_html(subtitle)
+    );
+    let _ = writeln!(
+        output,
+        "<div class=\"hero-status\">{hero_status_html}</div>"
+    );
+    output.push_str("<div class=\"metrics\">");
+    for metric in metrics {
+        let _ = writeln!(
+            output,
+            "<div class=\"metric {tone}\"><div class=\"metric-label\">{label}</div><div class=\"metric-value\">{value}</div></div>",
+            tone = metric.tone,
+            label = escape_html(metric.label),
+            value = metric.value,
+        );
+    }
+    output.push_str("</div></header>");
+    for section in sections {
+        output.push_str(section);
+    }
+    output.push_str("<p class=\"footer\">Generated by Nexum Graph. Semantic coordination for multi-agent software engineering.</p>");
+    output.push_str("</main></body></html>");
+    output
+}
+
+fn merge_risk_summary(report: &ConflictReport) -> (String, &'static str, usize, String) {
+    let errors = report.error_count();
+    let warnings = report.warning_count();
+    let score = (errors.saturating_mul(45) + warnings.saturating_mul(18)).min(100);
+    if errors > 0 {
+        (
+            "High merge risk".to_string(),
+            "critical",
+            score.max(80),
+            format!(
+                "{} blocking semantic error(s) detected across {} and {}.",
+                errors, report.branch_a, report.branch_b
+            ),
+        )
+    } else if warnings > 0 {
+        (
+            "Review recommended".to_string(),
+            "warning",
+            score.max(40),
+            format!(
+                "{} warning-level semantic conflict(s) detected. Merge is possible, but it is not clean.",
+                warnings
+            ),
+        )
+    } else {
+        (
+            "Clean semantic check".to_string(),
+            "positive",
+            0,
+            format!(
+                "No blocking semantic conflicts detected between {} and {}.",
+                report.branch_a, report.branch_b
+            ),
+        )
+    }
+}
+
+fn start_readiness_summary(report: &StartReport) -> (String, &'static str, usize, String) {
+    let mut score = 0usize;
+    if report.demo.indexed_files > 0 {
+        score += 30;
+    }
+    if report.demo.current_diff.available {
+        score += 25;
+    }
+    if report.hook_installed && report.hook_healthy {
+        score += 25;
+    }
+    if report.auth_configured {
+        score += 20;
+    }
+
+    if score >= 75 {
+        (
+            "Ready to coordinate".to_string(),
+            "positive",
+            score,
+            "This repo already has enough Nexum Graph structure in place to show value immediately."
+                .to_string(),
+        )
+    } else if score >= 45 {
+        (
+            "Halfway activated".to_string(),
+            "warning",
+            score,
+            "The semantic graph is working. Install the merge guard and complete the operator path to make it durable."
+                .to_string(),
+        )
+    } else {
+        (
+            "Just getting started".to_string(),
+            "neutral",
+            score,
+            "The repo scan works, but the highest-value coordination safeguards still need to be turned on."
+                .to_string(),
+        )
+    }
+}
+
+fn severity_tone(severity: Severity) -> &'static str {
+    match severity {
+        Severity::Info => "neutral",
+        Severity::Warning => "warning",
+        Severity::Error => "critical",
+    }
+}
+
+fn start_step_tone(status: StartStepStatus) -> &'static str {
+    match status {
+        StartStepStatus::Recommended => "warning",
+        StartStepStatus::Ready => "neutral",
+        StartStepStatus::Complete => "positive",
+    }
+}
+
+fn escape_html(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }
 
 fn severity_label(severity: Severity) -> &'static str {

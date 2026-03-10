@@ -66,6 +66,7 @@ For a full sweep, use:
 
 ```bash
 python tools/release_tools.py assert-version-parity --tag v0.1.0
+python tools/project_facts.py check-readme
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --check
@@ -87,6 +88,7 @@ That usually means one or more of:
 
 - `README.md`
 - `CONTRIBUTING.md`
+- `CORE_INVARIANTS.md`
 - `RELEASING.md`
 - `SECURITY.md`
 - command help text
@@ -117,3 +119,22 @@ If the change is user-visible, include the operator-facing usage path, not just 
 If the change affects packaging, installers, workflows, or artifact naming, update [RELEASING.md](./RELEASING.md) in the same pull request.
 
 If the change affects `nex check`, git hook behavior, or the published GitHub Action in [action.yml](./action.yml), update [README.md](./README.md) with the operator-facing usage path in the same pull request.
+
+If the change affects public-facing counts or repo facts, run `python tools/project_facts.py sync-readme` and include the regenerated facts block from [README.md](./README.md).
+
+If the change affects semantic unit identity, graph diff semantics, or distributed coordination behavior, update [CORE_INVARIANTS.md](./CORE_INVARIANTS.md) in the same pull request.
+
+## Fuzzing Core Contracts
+
+The parser and graph layers now have dedicated libFuzzer targets in [fuzz](./fuzz). Use them when you touch semantic extraction, graph construction, or diff classification:
+
+```bash
+cargo fuzz run semantic_pipeline
+cargo fuzz run graph_diff
+```
+
+If you only need a compile smoke check for the fuzz package:
+
+```bash
+cargo check --manifest-path fuzz/Cargo.toml --bins
+```

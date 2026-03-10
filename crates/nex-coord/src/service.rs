@@ -392,20 +392,53 @@ impl CoordinationService {
     }
 
     fn rebuild_from_replica(&mut self) -> CodexResult<()> {
-        let records = self.replica.intent_records()?;
+        let mut records = self.replica.intent_records()?;
+        records.sort_by(|left, right| left.intent_id.cmp(&right.intent_id));
 
+        self.engine.import_locks(Vec::new());
         let mut intents = HashMap::with_capacity(records.len());
-        let mut locks = Vec::new();
+        let mut rejected = Vec::new();
+
         for record in records {
-            locks.extend(record.held_locks.iter().map(|held| nex_core::SemanticLock {
-                agent_id: record.hashed_agent_id,
-                target: held.target,
-                kind: held.kind,
-            }));
-            intents.insert(record.intent_id, record_to_active(record));
+            let mut active = record_to_active(record);
+            active.held_locks.sort_by(|left, right| {
+                left.target
+                    .cmp(&right.target)
+                    .then_with(|| intent_kind_rank(left.kind).cmp(&intent_kind_rank(right.kind)))
+            });
+
+            let mut granted = Vec::new();
+            let mut accepted = true;
+            for held in &active.held_locks {
+                match self.engine.request_lock(Intent {
+                    agent_id: active.hashed_agent_id,
+                    target: held.target,
+                    kind: held.kind,
+                }) {
+                    LockResult::Granted => granted.push(held.clone()),
+                    LockResult::Denied { .. } => {
+                        accepted = false;
+                        break;
+                    }
+                }
+            }
+
+            if accepted {
+                intents.insert(active.payload.id, active);
+            } else {
+                for held in granted {
+                    let _ = self
+                        .engine
+                        .release_lock(&active.hashed_agent_id, &held.target);
+                }
+                rejected.push(active.payload.id);
+            }
         }
 
-        self.engine.import_locks(locks);
+        for intent_id in rejected {
+            self.replica.remove_intent(intent_id)?;
+        }
+
         self.intents = intents;
         Ok(())
     }
@@ -530,4 +563,12 @@ fn random_peer_id() -> u64 {
     let mut bytes = [0u8; 8];
     bytes.copy_from_slice(&Uuid::new_v4().as_bytes()[..8]);
     u64::from_le_bytes(bytes)
+}
+
+fn intent_kind_rank(kind: IntentKind) -> u8 {
+    match kind {
+        IntentKind::Read => 0,
+        IntentKind::Write => 1,
+        IntentKind::Delete => 2,
+    }
 }

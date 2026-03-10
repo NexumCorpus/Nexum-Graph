@@ -106,6 +106,12 @@ async fn run_demo_reports_repo_summary_and_diff() {
     assert!(text.contains("Nexum Graph Demo"));
     assert!(text.contains("Current semantic diff: HEAD~1 -> HEAD"));
     assert!(text.contains("Highlights:"));
+
+    let html = format_demo_report(&report, "html");
+    assert!(html.starts_with("<!DOCTYPE html>"));
+    assert!(html.contains("Nexum Graph Demo Report"));
+    assert!(html.contains("Current semantic change surface"));
+    assert!(html.contains("nex check --install-hook"));
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -127,4 +133,7 @@ async fn run_demo_degrades_when_base_ref_is_unavailable() {
 
     let text = format_demo_report(&report, "text");
     assert!(text.contains("Unavailable:"));
+
+    let html = format_demo_report(&report, "html");
+    assert!(html.contains("Diff preview needs manual refs"));
 }

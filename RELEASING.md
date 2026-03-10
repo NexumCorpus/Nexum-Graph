@@ -12,6 +12,7 @@ Nexum Graph releases are GitHub Releases driven by semver tags in `vX.Y.Z` form.
 
 ```bash
 python tools/release_tools.py assert-version-parity --tag vX.Y.Z
+python tools/project_facts.py check-readme
 cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo fmt --check

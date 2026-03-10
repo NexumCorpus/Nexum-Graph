@@ -239,9 +239,11 @@ class ToolSelftestTests(unittest.TestCase):
         names = [name for name, _ in steps]
         py_compile = next(command for name, command in steps if name == "py_compile")
         self.assertIn("skill_repo_check", names)
+        self.assertIn("fuzz_manifest", names)
         self.assertIn("repo_skill:nexum-graph-sprint", names)
         self.assertIn("repo_skill:nexum-graph-maintainer", names)
         self.assertNotIn("skill:nexum-graph-sprint", names)
+        self.assertIn("tools/project_facts.py", py_compile)
         self.assertNotIn("tools/tool_selftest.py", py_compile)
 
 

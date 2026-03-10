@@ -87,6 +87,12 @@ async fn run_start_guides_new_repo_setup() {
     assert!(text.contains("Nexum Graph Start"));
     assert!(text.contains("Next steps"));
     assert!(text.contains("nex check --install-hook"));
+
+    let html = format_start_report(&report, "html");
+    assert!(html.starts_with("<!DOCTYPE html>"));
+    assert!(html.contains("Nexum Graph Start Report"));
+    assert!(html.contains("Activation score"));
+    assert!(html.contains("nex check --install-hook"));
 }
 
 #[tokio::test(flavor = "current_thread")]

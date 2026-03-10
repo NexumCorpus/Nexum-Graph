@@ -393,3 +393,48 @@ async fn list_recovers_from_backup_when_primary_json_is_invalid() {
     assert_eq!(loaded.len(), 1);
     assert_eq!(loaded[0].description, "restored from backup");
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn append_preserves_history_when_primary_is_missing_but_backup_exists() {
+    let path = temp_log_path();
+    let log = EventLog::new(path.clone());
+    let first_intent = Uuid::new_v4();
+    let second_intent = Uuid::new_v4();
+    let unit = make_unit("validate", "handler.ts", 10);
+    let first = event(
+        Uuid::new_v4(),
+        first_intent,
+        10,
+        "restored from backup",
+        vec![Mutation::AddUnit { unit: unit.clone() }],
+    );
+    let second = event(
+        Uuid::new_v4(),
+        second_intent,
+        20,
+        "appended after recovery",
+        vec![Mutation::RenameUnit {
+            id: unit.id,
+            from: "validate".to_string(),
+            to: "auth::validate".to_string(),
+        }],
+    );
+
+    std::fs::write(
+        backup_path(&path),
+        serde_json::to_string_pretty(&vec![first.clone()]).expect("serialize backup"),
+    )
+    .expect("write backup");
+    if path.exists() {
+        std::fs::remove_file(&path).expect("remove primary");
+    }
+
+    log.append(second.clone())
+        .await
+        .expect("append with backup");
+
+    let loaded = log.list().await.expect("list events");
+    assert_eq!(loaded.len(), 2);
+    assert_eq!(loaded[0].description, first.description);
+    assert_eq!(loaded[1].description, second.description);
+}

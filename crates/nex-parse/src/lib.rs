@@ -85,3 +85,9 @@ pub fn extractor_for_path(path: &Path) -> Option<Box<dyn SemanticExtractor>> {
     let ext = path.extension()?.to_str()?;
     extractor_for_extension(ext)
 }
+
+pub(crate) fn semantic_unit_id(qualified_name: &str, path: &Path, body_hash: u64) -> SemanticId {
+    let digest =
+        blake3::hash(format!("{}:{}:{}", qualified_name, path.display(), body_hash).as_bytes());
+    *digest.as_bytes()
+}

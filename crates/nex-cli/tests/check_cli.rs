@@ -3,7 +3,27 @@ use nex_cli::check_pipeline::{
     CheckHookInstallStatus, install_check_hook, pre_merge_commit_hook_script,
 };
 use nex_cli::cli::{Cli, Commands};
-use std::path::Path;
+use nex_cli::output::format_report;
+use nex_core::{ConflictKind, ConflictReport, SemanticConflict, SemanticUnit, Severity, UnitKind};
+use std::path::{Path, PathBuf};
+
+fn sample_unit(id_byte: u8, qualified_name: &str) -> SemanticUnit {
+    SemanticUnit {
+        id: [id_byte; 32],
+        kind: UnitKind::Function,
+        name: qualified_name
+            .rsplit("::")
+            .next()
+            .expect("unit name")
+            .to_string(),
+        qualified_name: qualified_name.to_string(),
+        file_path: PathBuf::from("src/lib.rs"),
+        byte_range: 0..32,
+        signature_hash: u64::from(id_byte),
+        body_hash: u64::from(id_byte) + 1,
+        dependencies: vec![],
+    }
+}
 
 fn init_temp_repo() -> (tempfile::TempDir, git2::Repository) {
     let dir = tempfile::tempdir().expect("create tempdir");
@@ -166,4 +186,44 @@ fn install_check_hook_is_idempotent_when_current_script_is_present() {
 
     assert_eq!(first.status, CheckHookInstallStatus::Installed);
     assert_eq!(second.status, CheckHookInstallStatus::Unchanged);
+}
+
+#[test]
+fn format_check_html_report_has_visual_sections() {
+    let report = ConflictReport {
+        conflicts: vec![SemanticConflict {
+            kind: ConflictKind::ConcurrentBodyEdit { unit: [1; 32] },
+            severity: Severity::Error,
+            unit_a: sample_unit(1, "auth::validate"),
+            unit_b: sample_unit(2, "auth::validate"),
+            description: "Both branches modified auth::validate in incompatible ways.".into(),
+            suggestion: Some("Merge the intended validation behavior before landing.".into()),
+        }],
+        branch_a: "main".into(),
+        branch_b: "feature/risk".into(),
+        merge_base: "abc123".into(),
+    };
+
+    let html = format_report(&report, "html");
+
+    assert!(html.starts_with("<!DOCTYPE html>"));
+    assert!(html.contains("Nexum Graph Semantic Check"));
+    assert!(html.contains("Merge risk score"));
+    assert!(html.contains("Both branches modified auth::validate in incompatible ways."));
+    assert!(html.contains("Suggested move"));
+}
+
+#[test]
+fn format_check_html_report_handles_clean_merge() {
+    let report = ConflictReport {
+        conflicts: vec![],
+        branch_a: "main".into(),
+        branch_b: "feature/clean".into(),
+        merge_base: "def456".into(),
+    };
+
+    let html = format_report(&report, "html");
+
+    assert!(html.contains("No blocking semantic conflicts detected."));
+    assert!(html.contains("good candidate for merge"));
 }

@@ -28,6 +28,9 @@ jobs:
       - name: Validate release version parity
         run: python tools/release_tools.py assert-version-parity --json
 
+      - name: Validate canonical project facts
+        run: python tools/project_facts.py check-readme
+
   rust:
     name: Rust (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

@@ -67,15 +67,21 @@ pub fn load_locks(repo_path: &Path) -> CodexResult<Vec<LockEntry>> {
     let lock_path = nex_dir.join(LOCKS_JSON_FILE);
 
     if crdt_path.exists() {
-        let document =
-            CoordinationDocument::load_from_path(&crdt_path, coordination_peer_id(repo_path))?;
-        let entries = document.lock_entries()?;
-        if !entries.is_empty() || !lock_path.exists() {
-            return Ok(entries);
+        match CoordinationDocument::load_from_path(&crdt_path, coordination_peer_id(repo_path)) {
+            Ok(document) => {
+                let entries = document.lock_entries()?;
+                if !entries.is_empty() || !lock_path.exists() {
+                    return Ok(entries);
+                }
+            }
+            Err(_) if lock_path.exists() => {
+                return load_lock_snapshot(&lock_path);
+            }
+            Err(err) => return Err(err),
         }
     }
 
-    Ok(load_json_with_backup(&lock_path)?.unwrap_or_default())
+    load_lock_snapshot(&lock_path)
 }
 
 /// Save lock entries to `.nex/locks.json`.
@@ -92,7 +98,8 @@ pub fn save_locks(repo_path: &Path, entries: &[LockEntry]) -> CodexResult<()> {
 
     let crdt_path = nex_dir.join(COORDINATION_CRDT_FILE);
     let document =
-        CoordinationDocument::load_from_path(&crdt_path, coordination_peer_id(repo_path))?;
+        CoordinationDocument::load_from_path(&crdt_path, coordination_peer_id(repo_path))
+            .or_else(|_| CoordinationDocument::new(coordination_peer_id(repo_path)))?;
     document.replace_lock_entries(entries)?;
     document.save_to_path(&crdt_path)?;
 
@@ -246,7 +253,9 @@ pub fn run_locks(repo_path: &Path) -> CodexResult<Vec<LockEntry>> {
 /// 4. Build CodeGraph at HEAD via `collect_files_at_ref` + `build_graph`
 /// 5. Convert `agent_name` to `AgentId` via `agent_name_to_id`
 /// 6. Load existing lock entries from disk via `load_locks`
-/// 7. Convert `LockEntry` items to `SemanticLock` items
+/// 7. Convert `LockEntry` items to `SemanticLock` items, resolving each target
+///    against `graph_before` by semantic name when content-addressed ids have
+///    changed since the lock was acquired
 /// 8. Call `nex_validate::ValidationEngine::validate(...)`
 /// 9. Return the `ValidationReport`
 ///
@@ -271,10 +280,20 @@ pub fn run_validate(
     let entries = load_locks(repo_path)?;
     let semantic_locks: Vec<nex_core::SemanticLock> = entries
         .iter()
-        .map(|entry| nex_core::SemanticLock {
-            agent_id: entry.agent_id,
-            target: entry.target,
-            kind: entry.kind,
+        .map(|entry| {
+            let target = if graph_before.get(&entry.target).is_some() {
+                entry.target
+            } else {
+                find_unit_by_name(&graph_before, &entry.target_name)
+                    .map(|unit| unit.id)
+                    .unwrap_or(entry.target)
+            };
+
+            nex_core::SemanticLock {
+                agent_id: entry.agent_id,
+                target,
+                kind: entry.kind,
+            }
         })
         .collect();
 
@@ -302,4 +321,8 @@ fn coordination_peer_id(repo_path: &Path) -> u64 {
     let mut bytes = [0u8; 8];
     bytes.copy_from_slice(&hash.as_bytes()[..8]);
     u64::from_le_bytes(bytes)
+}
+
+fn load_lock_snapshot(path: &Path) -> CodexResult<Vec<LockEntry>> {
+    Ok(load_json_with_backup(path)?.unwrap_or_default())
 }

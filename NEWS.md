@@ -7,6 +7,8 @@ Latest product-facing updates for the public repo.
 - One-step installers for macOS, Linux, and Windows via [install.sh](./install.sh) and [install.ps1](./install.ps1)
 - GitHub Release automation, bundled binaries, checksum manifests, and packaged VS Code extension artifacts
 - A published semantic-check GitHub Action in [action.yml](./action.yml)
+- Visual HTML reports for `nex demo`, `nex start`, and `nex check`, plus PR artifact upload in [semantic-check.yml](./.github/workflows/semantic-check.yml)
+- Canonical generated repo facts in [README.md](./README.md), enforced by [tools/project_facts.py](./tools/project_facts.py)
 - Local merge protection with `nex check --install-hook`
 - Guided first run with `nex start`
 

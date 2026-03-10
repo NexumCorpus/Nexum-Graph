@@ -13,7 +13,7 @@ use std::path::PathBuf;
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Content-addressed identity for semantic units.
-/// BLAKE3 256-bit hash over the unit's qualified name, file path, and content.
+/// BLAKE3 256-bit hash over the unit's qualified name, file path, and normalized body hash.
 pub type SemanticId = [u8; 32];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -26,7 +26,7 @@ pub type SemanticId = [u8; 32];
 /// at a granularity suitable for semantic diffing and coordination.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct SemanticUnit {
-    /// Content-addressed hash (BLAKE3 over qualified_name + file_path + body).
+    /// Content-addressed hash (BLAKE3 over qualified_name + file_path + normalized body hash).
     pub id: SemanticId,
     /// What kind of code entity this is.
     pub kind: UnitKind,

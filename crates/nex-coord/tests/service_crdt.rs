@@ -36,9 +36,9 @@ fn build_graph() -> (CodeGraph, SemanticUnit, SemanticUnit, SemanticUnit) {
     (graph, validate, process_request, format_date)
 }
 
-fn payload(agent: &str, target: &SemanticUnit) -> IntentPayload {
+fn payload_with_id(agent: &str, target: &SemanticUnit, intent_id: Uuid) -> IntentPayload {
     IntentPayload {
-        id: Uuid::new_v4(),
+        id: intent_id,
         agent_id: agent.to_string(),
         timestamp: Utc::now(),
         description: format!("edit {}", target.name),
@@ -46,6 +46,10 @@ fn payload(agent: &str, target: &SemanticUnit) -> IntentPayload {
         estimated_changes: vec![PlannedChange::ModifyBody { unit: target.id }],
         ttl: Duration::from_secs(300),
     }
+}
+
+fn payload(agent: &str, target: &SemanticUnit) -> IntentPayload {
+    payload_with_id(agent, target, Uuid::new_v4())
 }
 
 fn approved_token(result: IntentResult) -> Uuid {
@@ -114,4 +118,101 @@ fn merge_crdt_propagates_committed_intent_removal() {
     let after_commit = left.export_crdt().unwrap();
     right.merge_crdt(&after_commit).unwrap();
     assert!(right.locks().is_empty());
+}
+
+#[test]
+fn merge_crdt_deterministically_resolves_conflicting_partition_writes() {
+    let (_, validate, _, _) = build_graph();
+    let mut left = CoordinationService::new_with_peer(build_graph().0, 501);
+    let mut right = CoordinationService::new_with_peer(build_graph().0, 502);
+
+    let alice_intent = payload_with_id("alice", &validate, Uuid::from_u128(1));
+    let bob_intent = payload_with_id("bob", &validate, Uuid::from_u128(2));
+
+    assert!(matches!(
+        left.declare_intent(alice_intent.clone()).unwrap(),
+        IntentResult::Approved { .. }
+    ));
+    assert!(matches!(
+        right.declare_intent(bob_intent.clone()).unwrap(),
+        IntentResult::Approved { .. }
+    ));
+
+    let left_bytes = left.export_crdt().unwrap();
+    let right_bytes = right.export_crdt().unwrap();
+    left.merge_crdt(&right_bytes).unwrap();
+    right.merge_crdt(&left_bytes).unwrap();
+
+    let left_locks = left.locks();
+    let right_locks = right.locks();
+    assert_eq!(left_locks.len(), 1);
+    assert_eq!(right_locks.len(), 1);
+    assert_eq!(left_locks[0].holder, "alice");
+    assert_eq!(right_locks[0].holder, "alice");
+    assert_eq!(left.intent_owner(alice_intent.id), Some("alice"));
+    assert_eq!(right.intent_owner(alice_intent.id), Some("alice"));
+    assert_eq!(left.intent_owner(bob_intent.id), None);
+    assert_eq!(right.intent_owner(bob_intent.id), None);
+}
+
+#[test]
+fn merge_crdt_resolves_transitive_conflicts_after_partition() {
+    let (_, validate, process_request, _) = build_graph();
+    let mut left = CoordinationService::new_with_peer(build_graph().0, 601);
+    let mut right = CoordinationService::new_with_peer(build_graph().0, 602);
+
+    let validate_intent = payload_with_id("alice", &validate, Uuid::from_u128(3));
+    let caller_intent = payload_with_id("bob", &process_request, Uuid::from_u128(4));
+
+    assert!(matches!(
+        left.declare_intent(validate_intent.clone()).unwrap(),
+        IntentResult::Approved { .. }
+    ));
+    assert!(matches!(
+        right.declare_intent(caller_intent.clone()).unwrap(),
+        IntentResult::Approved { .. }
+    ));
+
+    let left_bytes = left.export_crdt().unwrap();
+    let right_bytes = right.export_crdt().unwrap();
+    left.merge_crdt(&right_bytes).unwrap();
+    right.merge_crdt(&left_bytes).unwrap();
+
+    let left_locks = left.locks();
+    let right_locks = right.locks();
+    assert_eq!(left_locks.len(), 1);
+    assert_eq!(right_locks.len(), 1);
+    assert_eq!(left_locks[0].holder, "alice");
+    assert_eq!(right_locks[0].holder, "alice");
+    assert_eq!(left.intent_owner(caller_intent.id), None);
+    assert_eq!(right.intent_owner(caller_intent.id), None);
+}
+
+#[test]
+fn merge_crdt_idempotently_rejects_stale_conflicting_updates() {
+    let (_, validate, _, _) = build_graph();
+    let mut left = CoordinationService::new_with_peer(build_graph().0, 701);
+    let mut right = CoordinationService::new_with_peer(build_graph().0, 702);
+
+    let alice_intent = payload_with_id("alice", &validate, Uuid::from_u128(10));
+    let bob_intent = payload_with_id("bob", &validate, Uuid::from_u128(11));
+
+    assert!(matches!(
+        left.declare_intent(alice_intent.clone()).unwrap(),
+        IntentResult::Approved { .. }
+    ));
+    assert!(matches!(
+        right.declare_intent(bob_intent.clone()).unwrap(),
+        IntentResult::Approved { .. }
+    ));
+
+    let stale_right_bytes = right.export_crdt().unwrap();
+    left.merge_crdt(&stale_right_bytes).unwrap();
+    assert_eq!(left.locks().len(), 1);
+    assert_eq!(left.locks()[0].holder, "alice");
+
+    left.merge_crdt(&stale_right_bytes).unwrap();
+    assert_eq!(left.locks().len(), 1);
+    assert_eq!(left.locks()[0].holder, "alice");
+    assert_eq!(left.intent_owner(bob_intent.id), None);
 }

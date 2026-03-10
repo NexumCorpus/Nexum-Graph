@@ -371,7 +371,7 @@ fn build_unit(
     body_hash: u64,
 ) -> SemanticUnit {
     SemanticUnit {
-        id: semantic_id(&qualified_name, path),
+        id: crate::semantic_unit_id(&qualified_name, path, body_hash),
         kind,
         name,
         qualified_name,
@@ -381,11 +381,6 @@ fn build_unit(
         body_hash,
         dependencies: Vec::new(),
     }
-}
-
-fn semantic_id(qualified_name: &str, path: &Path) -> SemanticId {
-    let digest = blake3::hash(format!("{}:{}", qualified_name, path.display()).as_bytes());
-    *digest.as_bytes()
 }
 
 fn external_unit_id(module_name: &str, symbol_name: &str) -> SemanticId {

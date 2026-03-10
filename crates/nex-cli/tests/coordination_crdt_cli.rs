@@ -90,3 +90,57 @@ fn unlock_uses_crdt_state_when_json_snapshot_is_missing() {
     assert!(entries.is_empty());
     assert!(repo_path.join(".nex").join("coordination.loro").exists());
 }
+
+#[test]
+fn load_locks_uses_json_snapshot_when_crdt_primary_is_corrupt() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let entry = LockEntry {
+        agent_name: "alice".to_string(),
+        agent_id: agent_name_to_id("alice"),
+        target_name: "processRequest".to_string(),
+        target: [9u8; 32],
+        kind: IntentKind::Write,
+    };
+
+    save_locks(dir.path(), std::slice::from_ref(&entry)).unwrap();
+    std::fs::write(
+        dir.path().join(".nex").join("coordination.loro"),
+        b"not-loro",
+    )
+    .expect("corrupt crdt");
+
+    let loaded = load_locks(dir.path()).unwrap();
+    assert_eq!(loaded, vec![entry]);
+}
+
+#[test]
+fn save_locks_rebuilds_corrupt_crdt_store_from_snapshot_entries() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let initial = LockEntry {
+        agent_name: "alice".to_string(),
+        agent_id: agent_name_to_id("alice"),
+        target_name: "processRequest".to_string(),
+        target: [1u8; 32],
+        kind: IntentKind::Write,
+    };
+    let replacement = LockEntry {
+        agent_name: "bob".to_string(),
+        agent_id: agent_name_to_id("bob"),
+        target_name: "validate".to_string(),
+        target: [2u8; 32],
+        kind: IntentKind::Read,
+    };
+
+    save_locks(dir.path(), std::slice::from_ref(&initial)).unwrap();
+    std::fs::write(
+        dir.path().join(".nex").join("coordination.loro"),
+        b"broken-state",
+    )
+    .expect("corrupt crdt");
+
+    save_locks(dir.path(), std::slice::from_ref(&replacement)).unwrap();
+    std::fs::remove_file(dir.path().join(".nex").join("locks.json")).expect("remove json");
+
+    let loaded = load_locks(dir.path()).unwrap();
+    assert_eq!(loaded, vec![replacement]);
+}

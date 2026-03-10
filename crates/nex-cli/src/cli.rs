@@ -24,7 +24,7 @@ pub enum Commands {
         /// Path to the git repository (defaults to ".").
         #[arg(long)]
         repo_path: Option<PathBuf>,
-        /// Output format: json or text.
+        /// Output format: json, text, or html.
         #[arg(long, default_value = "text")]
         format: String,
     },
@@ -39,7 +39,7 @@ pub enum Commands {
         /// Path to the git repository (defaults to ".").
         #[arg(long)]
         repo_path: Option<PathBuf>,
-        /// Output format: json or text.
+        /// Output format: json, text, or html.
         #[arg(long, default_value = "text")]
         format: String,
     },
@@ -67,7 +67,7 @@ pub enum Commands {
         /// Path to the git repository (defaults to ".").
         #[arg(long)]
         repo_path: Option<PathBuf>,
-        /// Output format: json, text, or github.
+        /// Output format: json, text, github, or html.
         #[arg(long, default_value = "text")]
         format: String,
         /// Install a local git pre-merge hook that runs `nex check`.
