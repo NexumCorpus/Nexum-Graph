@@ -491,12 +491,18 @@ fn merge_kind(
     incoming: IntentKind,
 ) {
     let merged = match requested.get(&target).copied() {
-        Some(IntentKind::Delete) | Some(_) if incoming == IntentKind::Delete => IntentKind::Delete,
-        Some(IntentKind::Write) | Some(_) if incoming == IntentKind::Write => IntentKind::Write,
-        Some(existing) => existing,
+        Some(existing) => escalate_kind(existing, incoming),
         None => incoming,
     };
     requested.insert(target, merged);
+}
+
+fn escalate_kind(a: IntentKind, b: IntentKind) -> IntentKind {
+    match (a, b) {
+        (IntentKind::Delete, _) | (_, IntentKind::Delete) => IntentKind::Delete,
+        (IntentKind::Write, _) | (_, IntentKind::Write) => IntentKind::Write,
+        _ => IntentKind::Read,
+    }
 }
 
 fn release_active_intent(
@@ -579,5 +585,62 @@ fn intent_kind_rank(kind: IntentKind) -> u8 {
         IntentKind::Read => 0,
         IntentKind::Write => 1,
         IntentKind::Delete => 2,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{IntentKind, escalate_kind};
+
+    #[test]
+    fn escalate_kind_delete_wins_over_write() {
+        assert!(matches!(
+            escalate_kind(IntentKind::Delete, IntentKind::Write),
+            IntentKind::Delete
+        ));
+        assert!(matches!(
+            escalate_kind(IntentKind::Write, IntentKind::Delete),
+            IntentKind::Delete
+        ));
+    }
+
+    #[test]
+    fn escalate_kind_delete_wins_over_read() {
+        assert!(matches!(
+            escalate_kind(IntentKind::Delete, IntentKind::Read),
+            IntentKind::Delete
+        ));
+        assert!(matches!(
+            escalate_kind(IntentKind::Read, IntentKind::Delete),
+            IntentKind::Delete
+        ));
+    }
+
+    #[test]
+    fn escalate_kind_write_wins_over_read() {
+        assert!(matches!(
+            escalate_kind(IntentKind::Write, IntentKind::Read),
+            IntentKind::Write
+        ));
+        assert!(matches!(
+            escalate_kind(IntentKind::Read, IntentKind::Write),
+            IntentKind::Write
+        ));
+    }
+
+    #[test]
+    fn escalate_kind_same_returns_same() {
+        assert!(matches!(
+            escalate_kind(IntentKind::Read, IntentKind::Read),
+            IntentKind::Read
+        ));
+        assert!(matches!(
+            escalate_kind(IntentKind::Write, IntentKind::Write),
+            IntentKind::Write
+        ));
+        assert!(matches!(
+            escalate_kind(IntentKind::Delete, IntentKind::Delete),
+            IntentKind::Delete
+        ));
     }
 }

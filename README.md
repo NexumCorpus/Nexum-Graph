@@ -15,7 +15,7 @@ This repository is the full product codebase:
 - Guided first run via `nex start`
 - TypeScript, Python, and Rust semantic extraction
 - Semantic diff, coordination, validation, event log, HTTP server, and LSP integration
-- 310 source-defined automated tests (265 Rust, 45 Python)
+- 316 source-defined automated tests (271 Rust, 45 Python)
 - MIT licensed
 <!-- project-facts:end -->
 

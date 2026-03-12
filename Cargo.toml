@@ -44,7 +44,7 @@ chrono = { version = "0.4", features = ["clock", "serde"] }
 uuid = { version = "1", features = ["serde", "v4"] }
 
 # Git
-git2 = "0.20"
+git2 = { version = "0.20", features = ["vendored-libgit2", "vendored-openssl"] }
 
 # Hashing
 blake3 = "1"

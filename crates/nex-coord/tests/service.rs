@@ -150,3 +150,57 @@ fn expire_stale_releases_locks() {
     assert_eq!(expired[0].agent_id, "alice");
     assert!(service.locks().is_empty());
 }
+
+#[test]
+fn mixed_remove_and_modify_acquires_delete_lock() {
+    let (graph, validate, _) = build_graph();
+    let mut service = CoordinationService::new(graph);
+
+    let intent = IntentPayload {
+        id: Uuid::new_v4(),
+        agent_id: "alice".to_string(),
+        timestamp: Utc::now(),
+        description: "remove + modify".to_string(),
+        target_units: vec![],
+        estimated_changes: vec![
+            PlannedChange::RemoveUnit { unit: validate.id },
+            PlannedChange::ModifyBody { unit: validate.id },
+        ],
+        ttl: Duration::from_secs(30),
+    };
+
+    let result = service.declare_intent(intent).unwrap();
+    assert!(matches!(result, IntentResult::Approved { .. }));
+
+    let locks = service.locks();
+    assert_eq!(locks.len(), 1);
+    assert_eq!(locks[0].holder, "alice");
+    assert_eq!(locks[0].target_name, "validate");
+}
+
+#[test]
+fn mixed_modify_then_remove_acquires_delete_lock() {
+    let (graph, validate, _) = build_graph();
+    let mut service = CoordinationService::new(graph);
+
+    let intent = IntentPayload {
+        id: Uuid::new_v4(),
+        agent_id: "bob".to_string(),
+        timestamp: Utc::now(),
+        description: "modify + remove".to_string(),
+        target_units: vec![],
+        estimated_changes: vec![
+            PlannedChange::ModifyBody { unit: validate.id },
+            PlannedChange::RemoveUnit { unit: validate.id },
+        ],
+        ttl: Duration::from_secs(30),
+    };
+
+    let result = service.declare_intent(intent).unwrap();
+    assert!(matches!(result, IntentResult::Approved { .. }));
+
+    let locks = service.locks();
+    assert_eq!(locks.len(), 1);
+    assert_eq!(locks[0].holder, "bob");
+    assert_eq!(locks[0].target_name, "validate");
+}
