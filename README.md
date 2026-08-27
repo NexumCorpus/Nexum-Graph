@@ -1,8 +1,17 @@
-# Nexum Graph
+<div align="center">
+  <img src="./nexum-hero.svg" alt="Nexum Graph — semantic coordination for multi-agent software work" width="100%" />
 
-GitHub-native merge gate and semantic control plane for AI-assisted software engineering.
+  <p><strong>Coordinate agents around what code means—not merely which files they touched.</strong></p>
 
-Nexum Graph turns a codebase into a semantic graph, coordinates multiple agents against that graph, validates whether changes respect declared intent, records those changes in an event log, and exposes the system over both CLI and LSP surfaces.
+  <p><a href="#install-in-one-step">Install</a> · <a href="#what-you-get">Product surface</a> · <a href="https://github.com/NexumCorpus/Nexum-Graph/releases/latest">Latest release</a> · <a href="https://github.com/NexumCorpus">Nexum Corpus</a></p>
+</div>
+
+---
+
+Nexum Graph is a GitHub-native merge gate and semantic control plane for
+AI-assisted software engineering. It turns a codebase into a semantic graph,
+coordinates multiple agents against declared intent, validates whether changes
+were authorized, and records the result in a replayable event log.
 
 The fastest way to understand the product is simple: install `nex`, run `nex start`, and then turn on the GitHub pull-request gate with `nex github init`. From there, `nex github status` tells you whether the repo is merely wired up, actually enforcing merge safety, and fully ready for branch protection.
 
