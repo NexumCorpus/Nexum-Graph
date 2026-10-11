@@ -147,6 +147,26 @@ fn add_dep_and_query_deps_of() {
 }
 
 #[test]
+fn add_dep_is_idempotent_per_kind() {
+    let mut graph = CodeGraph::new();
+    let caller = make_function("processRequest", "handler.ts", 10, 20);
+    let callee = make_function("validateToken", "auth.ts", 30, 40);
+    let caller_id = caller.id;
+    let callee_id = callee.id;
+
+    graph.add_unit(caller);
+    graph.add_unit(callee);
+    graph.add_dep(caller_id, callee_id, DepKind::Calls);
+    graph.add_dep(caller_id, callee_id, DepKind::Calls);
+    assert_eq!(graph.edge_count(), 1);
+    assert_eq!(graph.callers_of(&callee_id).len(), 1);
+
+    // A different kind between the same pair is a distinct edge.
+    graph.add_dep(caller_id, callee_id, DepKind::Uses);
+    assert_eq!(graph.edge_count(), 2);
+}
+
+#[test]
 fn query_callers_of() {
     let mut graph = CodeGraph::new();
     let caller = make_function("processRequest", "handler.ts", 10, 20);

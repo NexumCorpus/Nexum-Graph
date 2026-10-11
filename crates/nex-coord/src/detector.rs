@@ -42,7 +42,7 @@ impl ConflictDetector {
 
         let diff_a = graph_base.diff(&graph_a);
         let diff_b = graph_base.diff(&graph_b);
-        let mut conflicts = cross_reference(&diff_a, &diff_b, &graph_a, &graph_b);
+        let mut conflicts = cross_reference(&diff_a, &diff_b, &graph_base, &graph_a, &graph_b);
         conflicts.sort_by(|left, right| {
             severity_rank(left.severity)
                 .cmp(&severity_rank(right.severity))
@@ -100,6 +100,11 @@ pub(crate) fn build_graph_at_ref(
 /// - For each removed unit in diff_b, check if graph_a has callers -> DeletedDependency
 /// - For each signature-changed unit in diff_a, check if graph_b calls it -> SignatureMismatch
 /// - For each signature-changed unit in diff_b, check if graph_a calls it -> SignatureMismatch
+///
+///   A caller only counts as "branch X depends on it" when X's copy of the
+///   caller can survive the merge: a caller X left identical to base while the
+///   other branch modified or removed it is superseded by the other branch's
+///   version in a 3-way merge, so it is skipped (see `superseded_in_merge`).
 /// - For units modified in both diffs (by qualified_name):
 ///   - Both modify body -> ConcurrentBodyEdit (Warning)
 ///   - Both modify signature -> ConcurrentBodyEdit (Error)
@@ -107,15 +112,30 @@ pub(crate) fn build_graph_at_ref(
 pub(crate) fn cross_reference(
     diff_a: &SemanticDiff,
     diff_b: &SemanticDiff,
+    graph_base: &CodeGraph,
     graph_a: &CodeGraph,
     graph_b: &CodeGraph,
 ) -> Vec<SemanticConflict> {
     let mut conflicts = Vec::new();
+    let a_to_b = BranchPair {
+        base: graph_base,
+        changing: graph_a,
+        dependent: graph_b,
+        changing_label: "A",
+        dependent_label: "B",
+    };
+    let b_to_a = BranchPair {
+        base: graph_base,
+        changing: graph_b,
+        dependent: graph_a,
+        changing_label: "B",
+        dependent_label: "A",
+    };
 
-    push_deleted_dependency_conflicts(&mut conflicts, &diff_a.removed, graph_b, "A", "B");
-    push_deleted_dependency_conflicts(&mut conflicts, &diff_b.removed, graph_a, "B", "A");
-    push_signature_mismatch_conflicts(&mut conflicts, &diff_a.modified, graph_b, "A", "B");
-    push_signature_mismatch_conflicts(&mut conflicts, &diff_b.modified, graph_a, "B", "A");
+    push_deleted_dependency_conflicts(&mut conflicts, &diff_a.removed, &a_to_b);
+    push_deleted_dependency_conflicts(&mut conflicts, &diff_b.removed, &b_to_a);
+    push_signature_mismatch_conflicts(&mut conflicts, &diff_a.modified, &a_to_b);
+    push_signature_mismatch_conflicts(&mut conflicts, &diff_b.modified, &b_to_a);
     push_concurrent_modification_conflicts(&mut conflicts, diff_a, diff_b);
     push_naming_collision_conflicts(&mut conflicts, diff_a, diff_b);
 
@@ -225,19 +245,65 @@ fn build_graph_from_files(
     Ok(graph)
 }
 
+/// The two branch snapshots involved in one direction of cross-referencing:
+/// `changing` removed or re-signed a unit, `dependent` may still call it.
+struct BranchPair<'a> {
+    base: &'a CodeGraph,
+    changing: &'a CodeGraph,
+    dependent: &'a CodeGraph,
+    changing_label: &'a str,
+    dependent_label: &'a str,
+}
+
+/// Whether the dependent branch's copy of `caller` is superseded in a 3-way
+/// merge: the dependent branch left it identical to base (same file, same
+/// signature and body) while the changing branch modified or removed it. Git
+/// then keeps the changing branch's version, so the dependent branch's stale
+/// copy is not what calls the changed unit after the merge.
+///
+/// A caller the dependent branch added or modified is never superseded, and
+/// neither is one that both branches left untouched.
+fn superseded_in_merge(caller: &SemanticUnit, pair: &BranchPair<'_>) -> bool {
+    let Some(base_caller) = find_unit_at(pair.base, caller) else {
+        return false;
+    };
+    if !same_content(base_caller, caller) {
+        return false;
+    }
+    match find_unit_at(pair.changing, caller) {
+        Some(changing_caller) => !same_content(base_caller, changing_caller),
+        None => true,
+    }
+}
+
+fn find_unit_at<'a>(graph: &'a CodeGraph, like: &SemanticUnit) -> Option<&'a SemanticUnit> {
+    graph
+        .units()
+        .into_iter()
+        .find(|unit| unit.qualified_name == like.qualified_name && unit.file_path == like.file_path)
+}
+
+fn same_content(left: &SemanticUnit, right: &SemanticUnit) -> bool {
+    left.signature_hash == right.signature_hash && left.body_hash == right.body_hash
+}
+
 fn push_deleted_dependency_conflicts(
     conflicts: &mut Vec<SemanticConflict>,
     removed_units: &[SemanticUnit],
-    other_graph: &CodeGraph,
-    deleted_branch: &str,
-    dependent_branch: &str,
+    pair: &BranchPair<'_>,
 ) {
+    let other_graph = pair.dependent;
+    let deleted_branch = pair.changing_label;
+    let dependent_branch = pair.dependent_label;
     for removed_unit in removed_units {
         let Some(other_unit) = find_unit_by_name(other_graph, &removed_unit.qualified_name) else {
             continue;
         };
 
         for caller in other_graph.callers_of(&other_unit.id) {
+            if superseded_in_merge(caller, pair) {
+                continue;
+            }
             conflicts.push(SemanticConflict {
                 kind: ConflictKind::DeletedDependency {
                     deleted: removed_unit.id,
@@ -262,21 +328,35 @@ fn push_deleted_dependency_conflicts(
 fn push_signature_mismatch_conflicts(
     conflicts: &mut Vec<SemanticConflict>,
     modified_units: &[nex_core::ModifiedUnit],
-    other_graph: &CodeGraph,
-    changed_branch: &str,
-    caller_branch: &str,
+    pair: &BranchPair<'_>,
 ) {
+    let other_graph = pair.dependent;
+    let changed_branch = pair.changing_label;
+    let caller_branch = pair.dependent_label;
     for modified in modified_units {
         if !modified.changes.contains(&ChangeKind::SignatureChanged) {
             continue;
         }
+        // Name-based diffing pairs same-named units from different files (bare
+        // Python/TS names collide across modules). If the changing branch still
+        // holds the base unit untouched at its original file, the "signature
+        // change" is a new same-named unit elsewhere, not a change to this one.
+        if find_unit_at(pair.changing, &modified.before)
+            .is_some_and(|unit| same_content(unit, &modified.before))
+        {
+            continue;
+        }
 
-        let Some(other_unit) = find_unit_by_name(other_graph, &modified.after.qualified_name)
+        let Some(other_unit) = find_unit_at(other_graph, &modified.before)
+            .or_else(|| find_unit_by_name(other_graph, &modified.after.qualified_name))
         else {
             continue;
         };
 
         for caller in other_graph.callers_of(&other_unit.id) {
+            if superseded_in_merge(caller, pair) {
+                continue;
+            }
             conflicts.push(SemanticConflict {
                 kind: ConflictKind::SignatureMismatch {
                     function: modified.after.id,

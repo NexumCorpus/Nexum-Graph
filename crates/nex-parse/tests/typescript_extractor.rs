@@ -436,3 +436,28 @@ class PaymentProcessor {
         "method qualified_name should be ClassName::methodName"
     );
 }
+
+/// `dependencies()` receives every unit of the snapshot; a file that is not
+/// first in it must still get its cross-file call edges.
+#[test]
+fn resolves_dependencies_for_file_that_is_not_first_in_snapshot() {
+    let helper_source = b"export function helper(): number { return 1; }";
+    let caller_source = b"function caller(): number { return helper(); }";
+
+    let extractor = nex_parse::typescript_extractor();
+    let mut units = extractor
+        .extract(std::path::Path::new("src/a.ts"), helper_source)
+        .unwrap();
+    units.extend(
+        extractor
+            .extract(std::path::Path::new("src/b.ts"), caller_source)
+            .unwrap(),
+    );
+    let callee_id = units.iter().find(|u| u.name == "helper").unwrap().id;
+    let caller_id = units.iter().find(|u| u.name == "caller").unwrap().id;
+
+    let deps = extractor.dependencies(&units, caller_source).unwrap();
+    assert!(deps.iter().any(|(from, to, kind)| {
+        *from == caller_id && *to == callee_id && *kind == nex_core::DepKind::Calls
+    }));
+}

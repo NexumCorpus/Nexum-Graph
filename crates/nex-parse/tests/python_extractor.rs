@@ -218,3 +218,50 @@ fn empty_file_produces_no_units() {
     let units = extractor.extract(Path::new("empty.py"), b"").unwrap();
     assert!(units.is_empty());
 }
+
+/// `dependencies()` receives every unit of the snapshot. It must resolve the
+/// source's own file from content, not assume it is the first unit's file.
+#[test]
+fn resolves_dependencies_for_file_that_is_not_first_in_snapshot() {
+    let helper_source = b"def open_readonly(path):\n    return open(path)\n";
+    let caller_source = b"def collect(db):\n    return open_readonly(db).read()\n";
+
+    let extractor = py_extractor();
+    let mut units = extractor
+        .extract(Path::new("a/helpers.py"), helper_source)
+        .unwrap();
+    units.extend(
+        extractor
+            .extract(Path::new("b/caller.py"), caller_source)
+            .unwrap(),
+    );
+    // A byte-identical copy of the caller file must get its edges too.
+    units.extend(
+        extractor
+            .extract(Path::new("c/twin.py"), caller_source)
+            .unwrap(),
+    );
+
+    let callee_id = units.iter().find(|u| u.name == "open_readonly").unwrap().id;
+    let caller_ids: Vec<_> = units
+        .iter()
+        .filter(|u| u.name == "collect")
+        .map(|u| u.id)
+        .collect();
+    assert_eq!(caller_ids.len(), 2);
+
+    let deps = extractor.dependencies(&units, caller_source).unwrap();
+    for caller_id in caller_ids {
+        assert!(
+            deps.iter().any(|(from, to, kind)| {
+                *from == caller_id && *to == callee_id && *kind == DepKind::Calls
+            }),
+            "missing call edge"
+        );
+    }
+
+    // A source that is not part of `units` yields no edges rather than
+    // attributing its calls to some other file.
+    let stranger = b"def other(db):\n    return open_readonly(db)\n";
+    assert!(extractor.dependencies(&units, stranger).unwrap().is_empty());
+}

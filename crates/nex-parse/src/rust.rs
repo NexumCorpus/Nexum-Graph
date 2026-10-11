@@ -341,16 +341,27 @@ impl SemanticExtractor for RustExtractor {
             return Ok(Vec::new());
         }
 
-        let path = units
-            .first()
-            .map(|unit| unit.file_path.as_path())
-            .unwrap_or_else(|| Path::new("<memory.rs>"));
-        let (tree, analyzed_units) = self.analyze(path, source)?;
+        // `units` spans the whole snapshot, so the source's own path must be
+        // resolved from content rather than assumed to be the first unit's.
+        let (tree, analyzed_units) = self.analyze(Path::new("<memory.rs>"), source)?;
         let root = tree.root_node();
+        let source_paths =
+            crate::resolve_source_paths(units, analyzed_units.iter().map(|info| &info.unit));
 
-        let unit_by_id: HashMap<SemanticId, &UnitInfo> = analyzed_units
+        let unit_by_id: HashMap<SemanticId, &UnitInfo> = source_paths
             .iter()
-            .map(|unit| (unit.unit.id, unit))
+            .flat_map(|path| {
+                analyzed_units.iter().map(move |info| {
+                    (
+                        crate::semantic_unit_id(
+                            &info.unit.qualified_name,
+                            path,
+                            info.unit.body_hash,
+                        ),
+                        info,
+                    )
+                })
+            })
             .collect();
 
         let mut ids_by_name: HashMap<&str, Vec<SemanticId>> = HashMap::new();

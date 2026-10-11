@@ -98,3 +98,56 @@ pub(crate) fn semantic_unit_id(qualified_name: &str, path: &Path, body_hash: u64
         blake3::hash(format!("{}:{}:{}", qualified_name, path.display(), body_hash).as_bytes());
     *digest.as_bytes()
 }
+
+/// Work out which file path(s) a `dependencies()` source buffer belongs to.
+///
+/// `dependencies()` receives every unit in the snapshot (for cross-file
+/// resolution) plus one file's source, but not that file's path. `analyzed`
+/// are the units re-extracted from `source` under a placeholder path, so their
+/// ids are not the real ones. A path qualifies when every analyzed unit, with
+/// its id recomputed for that path, is present in `units`. Several paths
+/// qualify only when files have byte-identical unit content.
+///
+/// Callers used to take `units.first().file_path` as the source's path, which
+/// is only right for the first file of the snapshot: every other file then
+/// produced no dependency edges at all.
+pub(crate) fn resolve_source_paths<'a>(
+    units: &[SemanticUnit],
+    analyzed: impl IntoIterator<Item = &'a SemanticUnit>,
+) -> Vec<std::path::PathBuf> {
+    let analyzed: Vec<&SemanticUnit> = analyzed.into_iter().collect();
+    let Some(probe) = analyzed.first() else {
+        return Vec::new();
+    };
+
+    let mut candidates: Vec<&Path> = Vec::new();
+    for unit in units {
+        if unit.byte_range == probe.byte_range
+            && unit.body_hash == probe.body_hash
+            && unit.signature_hash == probe.signature_hash
+            && unit.qualified_name == probe.qualified_name
+            && !candidates.contains(&unit.file_path.as_path())
+        {
+            candidates.push(unit.file_path.as_path());
+        }
+    }
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+
+    let known_ids: std::collections::HashSet<SemanticId> =
+        units.iter().map(|unit| unit.id).collect();
+    candidates
+        .into_iter()
+        .filter(|path| {
+            analyzed.iter().all(|unit| {
+                known_ids.contains(&semantic_unit_id(
+                    &unit.qualified_name,
+                    path,
+                    unit.body_hash,
+                ))
+            })
+        })
+        .map(Path::to_path_buf)
+        .collect()
+}

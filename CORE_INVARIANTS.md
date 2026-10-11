@@ -9,6 +9,7 @@ The `nex-graph` and `nex-coord` layers carry infrastructure-grade correctness re
 - A body-only change must change `SemanticUnit.id`.
 - A signature-only change with an unchanged normalized body must preserve `SemanticUnit.id`.
 - Extractor dependency edges must only reference units emitted by the same extraction pass.
+- `dependencies(units, source)` receives every unit of the snapshot and must resolve which file `source` is from its content, never from the position of units in the slice: a file's edges must not depend on whether it is walked first. Byte-identical files each receive their edges; a source whose units are absent from `units` yields no edges.
 
 ## Graph Diff Invariants
 
@@ -17,7 +18,14 @@ The `nex-graph` and `nex-coord` layers carry infrastructure-grade correctness re
 - A unit is `moved` only when `signature_hash` and `body_hash` are unchanged and `file_path` changes.
 - A unit is `modified` when either `signature_hash` or `body_hash` changes, even if `file_path` also changes.
 - Dependency edges do not affect diff classification; they affect coordination and validation later, not unit identity.
+- `CodeGraph::add_dep()` is idempotent per `(from, to, kind)`: re-adding an existing edge does not create a parallel duplicate.
 - Rebuilding the same graph content in a different insertion order must not change diff output.
+
+## Conflict Detection Invariants
+
+- `DeletedDependency` and `SignatureMismatch` count a caller in the dependent branch only if that branch's copy of the caller survives a 3-way merge. A caller the dependent branch left identical to base (same file, signature and body) while the changing branch modified or removed it is superseded by the changing branch's version and is not reported.
+- Callers the dependent branch added or modified are always reported, as are callers neither branch touched.
+- A name-matched `SignatureChanged` entry is not reported as a `SignatureMismatch` when the changing branch still holds the base unit with unchanged signature and body at its original file; the entry is a same-named unit added elsewhere, not a change to that unit.
 
 ## Coordination / CRDT Invariants
 
@@ -46,7 +54,7 @@ The `nex-graph` and `nex-coord` layers carry infrastructure-grade correctness re
 
 ## Change Discipline
 
-If a change touches `nex-parse` unit identity behavior, `nex-graph` diff behavior, or `nex-coord` distributed reconciliation:
+If a change touches `nex-parse` unit identity or dependency behavior, `nex-graph` diff behavior, `nex-coord` conflict detection, or `nex-coord` distributed reconciliation:
 
 1. Update this file if the intended invariant changes.
 2. Add or update tests that encode the new invariant directly.

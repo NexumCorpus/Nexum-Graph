@@ -68,6 +68,10 @@ impl CodeGraph {
     }
 
     /// Add a dependency edge between two units.
+    ///
+    /// Idempotent: re-adding an existing `(from, to, kind)` edge is a no-op, so
+    /// files with byte-identical content (whose edges are reported once per
+    /// file) do not produce parallel duplicate edges.
     pub fn add_dep(&mut self, from: SemanticId, to: SemanticId, kind: DepKind) {
         let Some(from_index) = self.index.get(&from).copied() else {
             return;
@@ -75,6 +79,13 @@ impl CodeGraph {
         let Some(to_index) = self.index.get(&to).copied() else {
             return;
         };
+        if self
+            .graph
+            .edges_connecting(from_index, to_index)
+            .any(|edge| edge.weight().kind == kind)
+        {
+            return;
+        }
 
         self.graph.add_edge(from_index, to_index, DepEdge { kind });
     }

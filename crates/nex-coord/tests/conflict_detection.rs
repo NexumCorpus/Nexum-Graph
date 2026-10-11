@@ -573,3 +573,278 @@ fn merge_base_is_populated_in_report() {
         "merge_base should be a valid hex string"
     );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5. Merge-aware caller attribution (Night Adversary regressions)
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn detect(repo: &git2::Repository) -> nex_core::ConflictReport {
+    ConflictDetector::detect(repo.workdir().unwrap(), "branch_a", "branch_b")
+        .expect("detect conflicts")
+}
+
+fn conflict_callers(report: &nex_core::ConflictReport) -> Vec<String> {
+    let mut callers: Vec<String> = report
+        .conflicts
+        .iter()
+        .map(|conflict| conflict.unit_b.name.clone())
+        .collect();
+    callers.sort();
+    callers
+}
+
+/// zen-bridge#47 shape: branch A adds new cross-file callers of an existing
+/// helper; branch B renames the helper and updates every caller that existed
+/// at base. After merge, exactly A's new calls dangle. Neither new caller is
+/// in the first file of the snapshot, which used to leave them without edges.
+#[test]
+fn detects_new_cross_file_calls_to_function_renamed_by_other_branch() {
+    let (_dir, repo) = init_temp_repo();
+
+    write_and_stage(&repo, "aaa/first.py", "def unrelated():\n    return 1\n");
+    write_and_stage(
+        &repo,
+        "tools/stats.py",
+        "def _open_readonly(path):\n    return open(path)\n\n\
+         def load_terms(path):\n    return _open_readonly(path).read()\n",
+    );
+    write_and_stage(
+        &repo,
+        "tests/test_stats.py",
+        "from tools.stats import _open_readonly\n\n\
+         def test_stats_readonly():\n    assert _open_readonly('x')\n",
+    );
+    let base = commit(&repo, "base");
+
+    create_branch_at(&repo, "branch_a", base);
+    write_and_stage(
+        &repo,
+        "tools/gap.py",
+        "from tools.stats import _open_readonly\n\n\
+         def collect_candidates(db):\n    return _open_readonly(db).read()\n",
+    );
+    write_and_stage(
+        &repo,
+        "tests/test_gap.py",
+        "from tools.stats import _open_readonly\n\n\
+         def test_gap_readonly():\n    assert _open_readonly('y')\n",
+    );
+    commit(&repo, "add gap tool");
+
+    create_branch_at(&repo, "branch_b", base);
+    write_and_stage(
+        &repo,
+        "tools/stats.py",
+        "def _open_readonly_v2(path):\n    return open(path)\n\n\
+         def load_terms(path):\n    return _open_readonly_v2(path).read()\n",
+    );
+    write_and_stage(
+        &repo,
+        "tests/test_stats.py",
+        "from tools.stats import _open_readonly_v2\n\n\
+         def test_stats_readonly():\n    assert _open_readonly_v2('x')\n",
+    );
+    commit(&repo, "rename _open_readonly");
+
+    let report = detect(&repo);
+    assert!(
+        report.conflicts.iter().all(|conflict| matches!(
+            conflict.kind,
+            ConflictKind::DeletedDependency { .. }
+        ) && conflict.unit_a.name == "_open_readonly"),
+        "unexpected conflicts: {:?}",
+        report.conflicts
+    );
+    // B's updated callers (load_terms, test_stats_readonly) are what the merge
+    // keeps, so only A's two new callers dangle.
+    assert_eq!(
+        conflict_callers(&report),
+        vec![
+            "collect_candidates".to_string(),
+            "test_gap_readonly".to_string()
+        ]
+    );
+}
+
+/// WhatTheFed#4 shape: A changes `build_site`'s signature and updates its
+/// caller `main`; B edits an unrelated function and never touches `main`.
+/// The merge keeps A's `main`, so nothing is broken.
+#[test]
+fn signature_change_with_caller_updated_in_same_branch_is_clean() {
+    let (_dir, repo) = init_temp_repo();
+
+    write_and_stage(
+        &repo,
+        "scripts/site.py",
+        "def run_ingestion(label):\n    return [label]\n\n\
+         def build_site(*, output_dir):\n    return output_dir\n\n\
+         def main():\n    build_site(output_dir='out')\n",
+    );
+    let base = commit(&repo, "base");
+
+    create_branch_at(&repo, "branch_a", base);
+    write_and_stage(
+        &repo,
+        "scripts/site.py",
+        "def run_ingestion(label):\n    return [label]\n\n\
+         def build_site(*, output_dir, refresh=False):\n    return output_dir if refresh else None\n\n\
+         def main():\n    build_site(output_dir='out', refresh=True)\n",
+    );
+    commit(&repo, "add refresh flag");
+
+    create_branch_at(&repo, "branch_b", base);
+    write_and_stage(
+        &repo,
+        "scripts/site.py",
+        "def run_ingestion(label):\n    return ['-u', label]\n\n\
+         def build_site(*, output_dir):\n    return output_dir\n\n\
+         def main():\n    build_site(output_dir='out')\n",
+    );
+    commit(&repo, "unbuffered ingestion");
+
+    let report = detect(&repo);
+    assert!(
+        report.conflicts.is_empty(),
+        "expected no conflicts, got: {:?}",
+        report.conflicts
+    );
+}
+
+/// Counterpart: when B itself modifies the caller and keeps the old call,
+/// B's caller survives the merge and must still be flagged.
+#[test]
+fn signature_change_still_flagged_when_other_branch_modifies_caller() {
+    let (_dir, repo) = init_temp_repo();
+
+    write_and_stage(
+        &repo,
+        "scripts/site.py",
+        "def build_site(*, output_dir):\n    return output_dir\n\n\
+         def main():\n    build_site(output_dir='out')\n",
+    );
+    let base = commit(&repo, "base");
+
+    create_branch_at(&repo, "branch_a", base);
+    write_and_stage(
+        &repo,
+        "scripts/site.py",
+        "def build_site(*, output_dir, refresh):\n    return output_dir if refresh else None\n\n\
+         def main():\n    build_site(output_dir='out', refresh=True)\n",
+    );
+    commit(&repo, "require refresh");
+
+    create_branch_at(&repo, "branch_b", base);
+    write_and_stage(
+        &repo,
+        "scripts/site.py",
+        "def build_site(*, output_dir):\n    return output_dir\n\n\
+         def main():\n    print('building')\n    build_site(output_dir='out')\n",
+    );
+    commit(&repo, "log before build");
+
+    let report = detect(&repo);
+    let mismatches: Vec<_> = report
+        .conflicts
+        .iter()
+        .filter(|conflict| matches!(conflict.kind, ConflictKind::SignatureMismatch { .. }))
+        .collect();
+    assert_eq!(mismatches.len(), 1, "conflicts: {:?}", report.conflicts);
+    assert_eq!(mismatches[0].unit_a.name, "build_site");
+    assert_eq!(mismatches[0].unit_b.name, "main");
+}
+
+/// Counterpart: a caller B adds with the old signature must still be flagged,
+/// even though A updated the pre-existing caller.
+#[test]
+fn signature_change_still_flagged_for_caller_added_by_other_branch() {
+    let (_dir, repo) = init_temp_repo();
+
+    write_and_stage(
+        &repo,
+        "scripts/site.py",
+        "def build_site(*, output_dir):\n    return output_dir\n\n\
+         def main():\n    build_site(output_dir='out')\n",
+    );
+    let base = commit(&repo, "base");
+
+    create_branch_at(&repo, "branch_a", base);
+    write_and_stage(
+        &repo,
+        "scripts/site.py",
+        "def build_site(*, output_dir, refresh):\n    return output_dir if refresh else None\n\n\
+         def main():\n    build_site(output_dir='out', refresh=True)\n",
+    );
+    commit(&repo, "require refresh");
+
+    create_branch_at(&repo, "branch_b", base);
+    write_and_stage(
+        &repo,
+        "scripts/preview.py",
+        "def preview():\n    return build_site(output_dir='preview')\n",
+    );
+    commit(&repo, "add preview caller");
+
+    let report = detect(&repo);
+    let flagged: Vec<_> = report
+        .conflicts
+        .iter()
+        .filter(|conflict| matches!(conflict.kind, ConflictKind::SignatureMismatch { .. }))
+        .map(|conflict| conflict.unit_b.name.as_str())
+        .collect();
+    assert_eq!(
+        flagged,
+        vec!["preview"],
+        "conflicts: {:?}",
+        report.conflicts
+    );
+}
+
+/// CortexView#3 shape: A only adds a new `run` in another module. Bare
+/// Python names collide, so the name-based diff pairs it with the untouched
+/// `core/pipeline.py` `run` and calls it a signature change. The base `run` is
+/// intact in A, so B's existing callers are not in conflict.
+#[test]
+fn same_named_function_added_in_another_file_is_not_a_signature_change() {
+    let (_dir, repo) = init_temp_repo();
+
+    write_and_stage(
+        &repo,
+        "core/pipeline.py",
+        "def run(sources):\n    return list(sources)\n\n\
+         def helper(x):\n    return x\n",
+    );
+    write_and_stage(
+        &repo,
+        "tests/test_pipeline.py",
+        "def test_run():\n    assert run([1]) == [1]\n",
+    );
+    let base = commit(&repo, "base");
+
+    create_branch_at(&repo, "branch_a", base);
+    write_and_stage(
+        &repo,
+        "ml/synth.py",
+        "def run(net, path):\n    return net(path)\n\n\
+         def evaluate(net):\n    return run(net, 'x')\n",
+    );
+    commit(&repo, "add ml run");
+
+    create_branch_at(&repo, "branch_b", base);
+    write_and_stage(
+        &repo,
+        "core/pipeline.py",
+        "def run(sources):\n    return list(sources)\n\n\
+         def helper(x):\n    return x + 0\n",
+    );
+    commit(&repo, "touch helper");
+
+    let report = detect(&repo);
+    assert!(
+        report
+            .conflicts
+            .iter()
+            .all(|conflict| !matches!(conflict.kind, ConflictKind::SignatureMismatch { .. })),
+        "unexpected SignatureMismatch: {:?}",
+        report.conflicts
+    );
+}

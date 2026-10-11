@@ -239,3 +239,28 @@ fn empty_file_produces_no_units() {
     let units = extractor.extract(Path::new("empty.rs"), b"").unwrap();
     assert!(units.is_empty());
 }
+
+/// `dependencies()` receives every unit of the snapshot; a file that is not
+/// first in it must still get its cross-file call edges.
+#[test]
+fn resolves_dependencies_for_file_that_is_not_first_in_snapshot() {
+    let helper_source = b"pub fn helper() -> u32 { 1 }";
+    let caller_source = b"pub fn caller() -> u32 { helper() }";
+
+    let extractor = nex_parse::rust_extractor();
+    let mut units = extractor
+        .extract(std::path::Path::new("src/a.rs"), helper_source)
+        .unwrap();
+    units.extend(
+        extractor
+            .extract(std::path::Path::new("src/b.rs"), caller_source)
+            .unwrap(),
+    );
+    let callee_id = units.iter().find(|u| u.name == "helper").unwrap().id;
+    let caller_id = units.iter().find(|u| u.name == "caller").unwrap().id;
+
+    let deps = extractor.dependencies(&units, caller_source).unwrap();
+    assert!(deps.iter().any(|(from, to, kind)| {
+        *from == caller_id && *to == callee_id && *kind == nex_core::DepKind::Calls
+    }));
+}
