@@ -319,7 +319,7 @@ impl CoordinationService {
             }
         }
 
-        expired.sort_by(|left, right| left.intent_id.cmp(&right.intent_id));
+        expired.sort_by_key(|record| record.intent_id);
         expired
     }
 
@@ -402,7 +402,7 @@ impl CoordinationService {
 
     fn rebuild_from_replica(&mut self) -> CodexResult<()> {
         let mut records = self.replica.intent_records()?;
-        records.sort_by(|left, right| left.intent_id.cmp(&right.intent_id));
+        records.sort_by_key(|record| record.intent_id);
 
         self.engine.import_locks(Vec::new());
         let mut intents = HashMap::with_capacity(records.len());
@@ -481,7 +481,7 @@ fn planned_locks(payload: &IntentPayload) -> Vec<HeldLock> {
         .into_iter()
         .map(|(target, kind)| HeldLock { target, kind })
         .collect();
-    locks.sort_by(|left, right| left.target.cmp(&right.target));
+    locks.sort_by_key(|lock| lock.target);
     locks
 }
 

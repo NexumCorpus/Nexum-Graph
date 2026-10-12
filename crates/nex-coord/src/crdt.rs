@@ -176,7 +176,7 @@ impl CoordinationDocument {
     /// Read all active-intent records from the document.
     pub fn intent_records(&self) -> CodexResult<Vec<CrdtIntentRecord>> {
         let mut records: Vec<CrdtIntentRecord> = read_records(&self.doc, INTENTS_MAP)?;
-        records.sort_by(|left, right| left.intent_id.cmp(&right.intent_id));
+        records.sort_by_key(|record| record.intent_id);
         Ok(records)
     }
 }
