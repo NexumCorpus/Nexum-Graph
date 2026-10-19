@@ -13,7 +13,14 @@ AI-assisted software engineering. It turns a codebase into a semantic graph,
 coordinates multiple agents against declared intent, validates whether changes
 were authorized, and records the result in a replayable event log.
 
-The fastest way to understand the product is simple: install `nex`, run `nex start`, and then turn on the GitHub pull-request gate with `nex github init`. From there, `nex github status` tells you whether the repo is merely wired up, actually enforcing merge safety, and fully ready for branch protection.
+The fastest way to understand the product: install `nex` and run `nex start` inside any git repository. It indexes the
+repo, shows the latest semantic diff, and prints the next exact commands to run.
+
+> **Release status (2026-10-19).** The one-step installers fetch **v0.1.0** (March 2026). In v0.1.0, `nex start`, `diff`,
+> `check`, `lock`, `validate`, `log`, `serve`, `auth` and `audit` work. Three newer pieces exist only on `main` until
+> the next release: the `nex github init` / `nex github status` pull-request gate, the `insights-json` and `sarif` output
+> formats, and the GitHub Action (`action.yml`), which needs them. To use those now, build from source
+> (see [I want to build everything from source](#i-want-to-build-everything-from-source)).
 
 This repository is the full product codebase:
 
@@ -532,6 +539,23 @@ Nexum Graph is opinionated:
 - Operational safety has to be part of the product, not an afterthought.
 
 This repo is also a live example of spec-driven multi-agent Rust development. The codebase itself is part of the thesis.
+
+## Evidence and limits
+
+- **Tests.** `cargo test --workspace --locked` runs the Rust suite. CI runs it on Linux, Windows and macOS, plus Clippy,
+  a version-parity check, the VS Code extension tests and an installer smoke test on Linux and Windows.
+- **Adversarial check.** "Night Adversary 0" (Oct 2026) planted semantic breaks in 30 real, merged AI-agent PRs, with
+  ground truth checked on the merged tree. Before and after its fix ([#5](https://github.com/NexumCorpus/Nexum-Graph/pull/5)):
+  real breaks caught 6/7 -> 9/9 (git alone catches 4/9), false alarms on controls 1/29 -> 0/30. Same 30 PRs, small n.
+  Still open: Python module paths are not in qualified names, so some checks match on bare names.
+- **Not claimed.** Extraction covers TypeScript, Python and Rust only. Conflict detection is semantic over those
+  extractors, not a proof that a merge is safe. No production deployment at scale is claimed. The server is meant for a
+  trusted local network unless you configure auth (see [SECURITY.md](./SECURITY.md)).
+
+## Where it sits
+
+Nexum Graph is the developer product of [Nexum Corpus](https://github.com/NexumCorpus): instruments for verifiable
+machine work. Built by Claude, directed by Nexum Corpus.
 
 ## Contributing
 

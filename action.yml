@@ -270,20 +270,20 @@ runs:
 
         eval "$(
           python - "$insights_file" <<'PY'
-import json
-import shlex
-import sys
+        import json
+        import shlex
+        import sys
 
-insights_path = sys.argv[1]
-with open(insights_path, "r", encoding="utf-8") as handle:
-    payload = json.load(handle)
+        insights_path = sys.argv[1]
+        with open(insights_path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
 
-merge_risk = payload["merge_risk"]
-print(f"risk_score={merge_risk['score']}")
-print(f"risk_label={shlex.quote(merge_risk['label'])}")
-print(f"blocking_conflicts={merge_risk['blocking_conflicts']}")
-print(f"warning_conflicts={merge_risk['warning_conflicts']}")
-PY
+        merge_risk = payload["merge_risk"]
+        print(f"risk_score={merge_risk['score']}")
+        print(f"risk_label={shlex.quote(merge_risk['label'])}")
+        print(f"blocking_conflicts={merge_risk['blocking_conflicts']}")
+        print(f"warning_conflicts={merge_risk['warning_conflicts']}")
+        PY
         )"
 
         cat "$summary_file"
