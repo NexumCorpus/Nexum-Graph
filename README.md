@@ -30,7 +30,7 @@ This repository is the full product codebase:
 - Guided first run via `nex start`
 - TypeScript, Python, and Rust semantic extraction
 - Semantic diff, coordination, validation, event log, HTTP server, and LSP integration
-- 325 source-defined automated tests (280 Rust, 45 Python)
+- 326 source-defined automated tests (280 Rust, 46 Python)
 - MIT licensed
 <!-- project-facts:end -->
 
@@ -58,9 +58,15 @@ That gives you a guided first run with a semantic snapshot, recommended next com
 
 Release assets ship:
 
-- `nex` and `nex-lsp` bundled for Linux, macOS, and Windows
+- `nex` and `nex-lsp` bundled for Linux (x86_64), macOS (Intel and Apple Silicon), and Windows (x86_64)
 - a packaged VS Code extension `.vsix`
 - `SHA256SUMS.txt` for integrity verification
+
+Linux note: the v0.2.0 Linux binaries were built on Ubuntu 24.04 and need **glibc 2.38 or newer**
+(Ubuntu 24.04+, Debian 13+, Fedora 39+). On older systems (Ubuntu 22.04, Debian 12) they fail to start with a
+`GLIBC_2.38 not found` error; build from source instead (see the prerequisites under "I want to build everything
+from source"). Check yours with `ldd --version`. The release workflow now builds the Linux bundle on Ubuntu 22.04,
+and CI fails if `nex` or `nex-lsp` needs a glibc newer than 2.35.
 
 ## ⚡ What You Get
 
@@ -140,11 +146,146 @@ You will immediately see:
 
 If you prefer to build from source instead, jump to `I want to build everything from source` below.
 
-### 3. Take the next step when you want more
+### 3. See it catch a break that git merges cleanly
+
+`nex check` compares two branches. To see it work before you pick branches of your own, run the bundled demo. It
+builds a throwaway repo in a temp directory with two branches: `feature/a` adds a parameter to `compute_total` and
+renames `format_name`; `feature/b` adds new code that calls both the old way. Git merges them without a conflict.
+A third branch, `feature/c`, makes an unrelated change and is the control. Needs `git` and `nex` on PATH.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/NexumCorpus/Nexum-Graph/main/examples/merge-risk-demo.sh | sh
+# or, from a clone:  sh examples/merge-risk-demo.sh
+```
+
+On Windows, run it from Git Bash. Captured output (v0.2.0; the merge-base hash differs on every run):
+
+```text
+== git merge-tree feature/a feature/b (does git see a conflict?)
+git: merges cleanly
+
+== nex check feature/a feature/b (expected: exit 1, 3 errors)
+Conflict Check: feature/a vs feature/b
+Merge base: f956212548e5d33f91999a64e4c4b7c620835a82
+=====================================
+Merge risk: High merge risk (100/100)
+Summary: 3 blocking semantic error(s) detected across feature/a and feature/b.
+Errors:   3
+Warnings: 0
+
+Why this scored this way:
+  - 3 blocking semantic error(s) must be resolved before merge.
+  - Callers on one branch expect outdated function signatures (2 cases), including `compute_total`.
+  - One branch removed units that the other branch still depends on, including `format_name`.
+
+Recommended next actions:
+  - Resolve blocking semantic conflicts before merge.
+  - Update or restore callers and dependents that still point at removed units.
+  - Rebase the caller branch and update call sites to the current signature.
+  - Rerun `nex check feature/a feature/b` after rebasing or reconciling the branches.
+
+Conflicts:
+
+[ERROR] SignatureMismatch: Branch A changed signature of `compute_total` but branch B calls it
+  Suggestion: Update callers in branch B to match new signature
+
+[ERROR] SignatureMismatch: Branch A changed signature of `compute_total` but branch B calls it
+  Suggestion: Update callers in branch B to match new signature
+
+[ERROR] DeletedDependency: Branch A deleted `format_name` but branch B depends on it via `report`
+  Suggestion: Consider keeping `format_name` or updating callers in branch B
+
+Exit code: 1
+
+exit 1
+
+== nex check feature/b feature/c (control; expected: exit 0)
+Conflict Check: feature/b vs feature/c
+Merge base: f956212548e5d33f91999a64e4c4b7c620835a82
+=====================================
+Merge risk: Clean semantic check (0/100)
+Summary: No blocking semantic conflicts detected between feature/b and feature/c.
+Errors:   0
+Warnings: 0
+
+Why this scored this way:
+  - No blocking semantic conflicts detected.
+
+Recommended next actions:
+  - Merge is a good candidate; keep the semantic hook and PR check enabled.
+Exit code: 0
+
+exit 0
+```
+
+`compute_total` is reported twice for its one call site in `report.py`. The rename shows up as a deletion of
+`format_name`, which is what it means for `feature/b`.
+
+Inside that demo repo, `nex diff` prints this and exits 0:
+
+```text
+$ nex diff main feature/a
+Semantic Diff Summary
+=====================
+Added:    1
+Removed:  1
+Modified: 1
+Moved:    0
+
+Added:
+  + Function full_name (lib.py)
+
+Removed:
+  - Function format_name (lib.py)
+
+Modified:
+  ~ Function compute_total [signature, body]
+```
+
+and `nex start` (exit 0):
+
+```text
+$ git checkout feature/a && nex start
+Nexum Graph Start
+=================
+Repo: .
+Languages: Python
+Indexed files: 2
+Semantic units: 3
+Dependency edges: 1
+Current diff preview: ready (1 added, 1 modified, 1 removed, 0 moved)
+Merge guard: not installed (<repo>/.git/hooks/pre-merge-commit)
+Server auth: not configured
+
+Next steps
+----------
+1. [ready] Inspect the current semantic diff
+   See the exact semantic changes behind the current repo snapshot.
+   nex diff HEAD~1 HEAD
+2. [recommended] Install the semantic merge guard
+   Install a local pre-merge hook so merge commits run `nex check` before they land.
+   nex check --install-hook
+3. [recommended] Install the GitHub pull request gate
+   Write the reusable GitHub workflow so pull requests get semantic comments, SARIF, and merge-risk artifacts.
+   nex github init --gate-mode errors-only
+4. [recommended] Turn on multi-agent coordination
+   Bootstrap auth once, then start the coordination server for multi-agent work.
+   nex auth init --agent alice --agent bob && nex serve --host 127.0.0.1 --port 4000
+
+Snapshot highlights
+-----------------
+  + Function full_name (lib.py)
+  ~ Function compute_total [signature, body]
+  - Function format_name (lib.py)
+```
+
+### 4. Run it on your own repo
+
+In your own repository, use two of your own branch names:
 
 ```bash
 nex diff HEAD~1 HEAD
-nex check feature/a feature/b
+nex check <your-branch> <other-branch>
 nex serve --host 127.0.0.1 --port 4000
 nex demo --format html > nex-demo-report.html
 ```
@@ -152,10 +293,10 @@ nex demo --format html > nex-demo-report.html
 What those do:
 
 - `nex diff` shows semantic changes between refs
-- `nex check` shows branch-to-branch merge risk before merge time
+- `nex check` shows branch-to-branch merge risk before merge time (exit 1 when it finds blocking errors)
 - `nex serve` turns Nexum Graph into a live coordination service
 
-### 4. Add the editor experience
+### 5. Add the editor experience
 
 1. Download `nexum-graph-vscode-X.Y.Z.vsix` from the latest [GitHub Release](https://github.com/NexumCorpus/Nexum-Graph/releases).
 2. In VS Code, open Extensions.
@@ -180,7 +321,8 @@ nex diff HEAD~1 HEAD
 ### I want to see merge-risk before merge time
 
 ```bash
-nex check feature/a feature/b
+sh examples/merge-risk-demo.sh              # self-contained demo, see Quickstart step 3
+nex check <your-branch> <other-branch>      # then two of your own branches
 nex check --install-hook
 ```
 
@@ -192,6 +334,17 @@ nex serve --host 127.0.0.1 --port 4000
 ```
 
 ### I want to build everything from source
+
+Prerequisites (matched to CI):
+
+- Rust stable via [rustup](https://rustup.rs) (CI uses current stable; 1.89 and 1.97 both build v0.2.0)
+- a C compiler (`build-essential` on Debian/Ubuntu, Xcode Command Line Tools on macOS, MSVC Build Tools on
+  Windows) for the tree-sitter grammars and `git2`
+- `git`
+- Node.js 22+ and npm, only for the VS Code extension
+- Python 3.12+, only for the repo tools under `tools/`
+
+A cold `cargo build --release` took about 5 minutes on 4 cores in a clean-machine run.
 
 ```bash
 git clone https://github.com/NexumCorpus/Nexum-Graph.git
@@ -221,6 +374,7 @@ npm --prefix extensions/vscode run package
 | `nex auth` | Bootstrap and manage server auth |
 | `nex audit verify` | Verify the tamper-evident audit trail |
 | `nex serve` | Start the coordination server |
+| `nex github` | Scaffold the GitHub pull request workflow (`nex github init`) |
 
 ### LSP surface
 
@@ -327,6 +481,8 @@ nex diff v0.1.0 HEAD --format json
 ```
 
 ### Conflict detection
+
+`feature/a` and `feature/b` are the branches `examples/merge-risk-demo.sh` creates; use your own in your repo.
 
 ```bash
 nex check feature/a feature/b
@@ -471,7 +627,8 @@ The repo includes a small toolchain for spec-driven, slice-based development:
 - `tools/sync_nex_skills.py`
   Installs repo-managed Codex skills into `$CODEX_HOME`.
 - `tools/tool_selftest.py`
-  Runs the Python tool regression suite and skill checks.
+  Runs the Python tool regression suite and skill checks. The skill checks need Codex skills under `$CODEX_HOME`
+  (default `~/.codex`); without them they report `SKIP` and the script still exits 0.
 
 Typical workflow:
 

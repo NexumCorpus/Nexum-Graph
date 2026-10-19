@@ -74,7 +74,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "npm"
           cache-dependency-path: extensions/vscode/package-lock.json
 
@@ -94,7 +94,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-22.04  # same image as the release build
             target: x86_64-unknown-linux-gnu
             shell_kind: unix
           - os: windows-latest
@@ -125,6 +125,20 @@ jobs:
         run: |
           cargo build --release --locked -p nex-cli --bin nex --target ${{ matrix.target }}
           cargo build --release --locked -p nex-lsp --bin nex-lsp --target ${{ matrix.target }}
+
+      - name: Check Linux glibc floor
+        if: matrix.shell_kind == 'unix'
+        shell: bash
+        run: |
+          floor=2.35
+          for bin in nex nex-lsp; do
+            need=$(objdump -T target/${{ matrix.target }}/release/$bin | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -V | tail -1)
+            echo "$bin needs glibc $need (floor $floor)"
+            if [ "$(printf '%s\n' "$need" "$floor" | sort -V | tail -1)" != "$floor" ]; then
+              echo "::error::$bin needs glibc $need, above the $floor floor"
+              exit 1
+            fi
+          done
 
       - name: Create local release fixture
         shell: bash

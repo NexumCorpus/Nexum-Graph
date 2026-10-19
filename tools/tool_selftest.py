@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -32,10 +33,15 @@ REPO_SKILLS = [
 ]
 
 SKILLS = [
-    Path.home() / ".codex" / "skills" / "nexum-graph-launch-operator",
-    Path.home() / ".codex" / "skills" / "nexum-graph-sprint",
-    Path.home() / ".codex" / "skills" / "nexum-graph-maintainer",
+    "nexum-graph-launch-operator",
+    "nexum-graph-sprint",
+    "nexum-graph-maintainer",
 ]
+
+CODEX_SKIP_DETAIL = (
+    "Codex skill tooling not found under $CODEX_HOME (default ~/.codex); skipped. "
+    "Only maintainers who use Codex skills need this check."
+)
 
 
 @dataclass(frozen=True)
@@ -48,6 +54,14 @@ class StepResult:
 
 def repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
+
+
+def codex_home() -> Path:
+    return Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
+
+
+def skill_validator() -> Path:
+    return codex_home() / "skills" / ".system" / "skill-creator" / "scripts" / "quick_validate.py"
 
 
 def parse_args() -> argparse.Namespace:
@@ -85,29 +99,25 @@ def run_step(name: str, command: list[str]) -> StepResult:
 
 
 def build_steps(skip_skills: bool) -> list[tuple[str, list[str]]]:
-    validator = (
-        Path.home()
-        / ".codex"
-        / "skills"
-        / ".system"
-        / "skill-creator"
-        / "scripts"
-        / "quick_validate.py"
-    )
+    validator = skill_validator()
+    codex_ready = validator.exists()
     steps: list[tuple[str, list[str]]] = [
         ("py_compile", [sys.executable, "-m", "py_compile", *TOOLS]),
         (
             "unit_tests",
             [sys.executable, "-m", "unittest", "discover", "-s", "tools", "-p", "test_*.py"],
         ),
-        ("skill_repo_check", [sys.executable, "tools/sync_nex_skills.py", "--check", "--json"]),
+        (
+            "skill_repo_check",
+            [sys.executable, "tools/sync_nex_skills.py", "--check", "--json"] if codex_ready else [],
+        ),
         ("workspace_doctor", [sys.executable, "tools/workspace_doctor.py", "--json"]),
         ("fuzz_manifest", ["cargo", "check", "--manifest-path", "fuzz/Cargo.toml", "--bins"]),
     ]
 
     for skill_dir in REPO_SKILLS:
         skill_path = repo_root() / skill_dir
-        if skill_path.exists():
+        if codex_ready and skill_path.exists():
             steps.append(
                 (
                     f"repo_skill:{skill_path.name}",
@@ -118,8 +128,9 @@ def build_steps(skip_skills: bool) -> list[tuple[str, list[str]]]:
             steps.append((f"repo_skill:{skill_path.name}", []))
 
     if not skip_skills:
-        for skill_dir in SKILLS:
-            if skill_dir.exists():
+        for skill_name in SKILLS:
+            skill_dir = codex_home() / "skills" / skill_name
+            if codex_ready and skill_dir.exists():
                 steps.append(
                     (
                         f"skill:{skill_dir.name}",
@@ -161,7 +172,13 @@ def print_json(results: list[StepResult]) -> None:
 def main() -> int:
     args = parse_args()
     results: list[StepResult] = []
+    codex_ready = skill_validator().exists()
     for name, command in build_steps(args.skip_skills):
+        if not command and not codex_ready:
+            results.append(
+                StepResult(name=name, status="skip", command="(codex skills absent)", detail=CODEX_SKIP_DETAIL)
+            )
+            continue
         if not command:
             results.append(
                 StepResult(

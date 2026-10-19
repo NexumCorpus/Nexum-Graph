@@ -293,6 +293,15 @@ class ToolSelftestTests(unittest.TestCase):
         self.assertIn("tools/project_facts.py", py_compile)
         self.assertNotIn("tools/tool_selftest.py", py_compile)
 
+    def test_skill_steps_are_skipped_without_codex_home(self) -> None:
+        with mock.patch.dict(tool_selftest.os.environ, {"CODEX_HOME": "Z:/no-such-codex-home"}):
+            steps = dict(tool_selftest.build_steps(skip_skills=False))
+
+        self.assertEqual(steps["skill_repo_check"], [])
+        self.assertEqual(steps["repo_skill:nexum-graph-sprint"], [])
+        self.assertEqual(steps["skill:nexum-graph-sprint"], [])
+        self.assertTrue(steps["unit_tests"])
+
 
 if __name__ == "__main__":
     unittest.main()

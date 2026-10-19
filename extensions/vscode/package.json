@@ -143,11 +143,12 @@
     "compile": "tsc -p .",
     "watch": "tsc -w -p .",
     "test": "npm run compile && node --test out/test/config.test.js",
-    "package": "npm run compile && npx @vscode/vsce package"
+    "package": "npm run compile && vsce package"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@types/vscode": "^1.96.0",
+    "@vscode/vsce": "4.0.0",
     "typescript": "^5.8.3"
   },
   "dependencies": {
