@@ -87,6 +87,8 @@ jobs:
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.os }}  # C deps (vendored OpenSSL) are glibc-specific; never reuse across images
 
       - name: Build nex
         run: cargo build --release --locked -p nex-cli --bin nex --target ${{ matrix.target }}

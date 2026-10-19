@@ -116,6 +116,8 @@ jobs:
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.os }}  # C deps (vendored OpenSSL) are glibc-specific; never reuse across images
 
       - name: Resolve release version
         shell: bash
