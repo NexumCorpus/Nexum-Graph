@@ -1,3 +1,4 @@
+import json
 import unittest
 from pathlib import Path
 
@@ -27,9 +28,12 @@ class ActionContractTests(unittest.TestCase):
 
     def test_readme_documents_gate_modes(self) -> None:
         content = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        version = json.loads(
+            (REPO_ROOT / "extensions" / "vscode" / "package.json").read_text(encoding="utf-8")
+        )["version"]
 
         self.assertIn(
-            "uses: NexumCorpus/Nexum-Graph/.github/workflows/reusable-semantic-check.yml@v0.1.0",
+            f"uses: NexumCorpus/Nexum-Graph/.github/workflows/reusable-semantic-check.yml@v{version}",
             content,
         )
         self.assertIn("gate-mode: errors-only", content)

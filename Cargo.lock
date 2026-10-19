@@ -1694,7 +1694,7 @@ dependencies = [
 
 [[package]]
 name = "nex-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "axum",
  "blake3",
@@ -1721,7 +1721,7 @@ dependencies = [
 
 [[package]]
 name = "nex-coord"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "blake3",
  "chrono",
@@ -1741,7 +1741,7 @@ dependencies = [
 
 [[package]]
 name = "nex-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "blake3",
  "serde",
@@ -1752,7 +1752,7 @@ dependencies = [
 
 [[package]]
 name = "nex-eventlog"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-nats",
  "blake3",
@@ -1768,7 +1768,7 @@ dependencies = [
 
 [[package]]
 name = "nex-graph"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "blake3",
  "nex-core",
@@ -1780,7 +1780,7 @@ dependencies = [
 
 [[package]]
 name = "nex-lsp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "futures-util",
@@ -1802,7 +1802,7 @@ dependencies = [
 
 [[package]]
 name = "nex-parse"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "blake3",
  "nex-core",
@@ -1819,7 +1819,7 @@ dependencies = [
 
 [[package]]
 name = "nex-validate"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "blake3",
  "nex-core",

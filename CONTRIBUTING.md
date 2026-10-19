@@ -65,7 +65,7 @@ python tools/verify_slice.py --changed
 For a full sweep, use:
 
 ```bash
-python tools/release_tools.py assert-version-parity --tag v0.1.0
+python tools/release_tools.py assert-version-parity --tag v0.2.0
 python tools/project_facts.py check-readme
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings

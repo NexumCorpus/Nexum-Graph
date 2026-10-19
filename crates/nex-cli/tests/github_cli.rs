@@ -161,9 +161,10 @@ fn run_github_init_writes_reusable_workflow_file() {
     let workflow = fs::read_to_string(&workflow_path).expect("read workflow");
 
     assert_eq!(result.workflow_path, workflow_path);
-    assert!(workflow.contains(
-        "uses: NexumCorpus/Nexum-Graph/.github/workflows/reusable-semantic-check.yml@v0.1.0"
-    ));
+    assert!(workflow.contains(&format!(
+        "uses: NexumCorpus/Nexum-Graph/.github/workflows/reusable-semantic-check.yml@v{}",
+        env!("CARGO_PKG_VERSION")
+    )));
     assert!(workflow.contains("gate-mode: errors-only"));
     assert!(workflow.contains("post-pr-comment: true"));
     assert!(workflow.contains("upload-sarif: true"));

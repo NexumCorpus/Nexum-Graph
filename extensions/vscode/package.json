@@ -2,7 +2,7 @@
   "name": "nexum-graph-vscode",
   "displayName": "Nexum Graph",
   "description": "VS Code integration for Nexum Graph semantic coordination and nex-lsp overlays.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "nexum-corpus",
   "license": "MIT",
   "repository": {

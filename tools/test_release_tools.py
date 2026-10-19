@@ -17,7 +17,8 @@ import release_tools
 
 class ReleaseToolsTests(unittest.TestCase):
     def test_assert_version_parity_matches_repo_manifests(self) -> None:
-        self.assertEqual(release_tools.assert_version_parity("v0.1.0"), "0.1.0")
+        version = release_tools.load_versions()["nex-cli"]
+        self.assertEqual(release_tools.assert_version_parity(f"v{version}"), version)
 
     def test_assert_version_parity_rejects_manifest_drift(self) -> None:
         with mock.patch.object(
@@ -34,7 +35,7 @@ class ReleaseToolsTests(unittest.TestCase):
 
     def test_assert_version_parity_rejects_tag_mismatch(self) -> None:
         with self.assertRaisesRegex(release_tools.ReleaseError, "does not match manifest version"):
-            release_tools.assert_version_parity("v0.2.0")
+            release_tools.assert_version_parity("v999.0.0")
 
     def test_release_asset_names_follow_contract(self) -> None:
         self.assertEqual(

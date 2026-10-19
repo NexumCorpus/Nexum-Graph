@@ -14,7 +14,7 @@ on:
 
 jobs:
   semantic-check:
-    uses: NexumCorpus/Nexum-Graph/.github/workflows/reusable-semantic-check.yml@v0.1.0
+    uses: NexumCorpus/Nexum-Graph/.github/workflows/reusable-semantic-check.yml@v0.2.0
     with:
       format: github
       gate-mode: advisory
@@ -41,7 +41,7 @@ on:
 
 jobs:
   semantic-check:
-    uses: NexumCorpus/Nexum-Graph/.github/workflows/reusable-semantic-check.yml@v0.1.0
+    uses: NexumCorpus/Nexum-Graph/.github/workflows/reusable-semantic-check.yml@v0.2.0
     with:
       format: github
       gate-mode: errors-only
@@ -68,7 +68,7 @@ on:
 
 jobs:
   semantic-check:
-    uses: NexumCorpus/Nexum-Graph/.github/workflows/reusable-semantic-check.yml@v0.1.0
+    uses: NexumCorpus/Nexum-Graph/.github/workflows/reusable-semantic-check.yml@v0.2.0
     with:
       format: github
       gate-mode: strict

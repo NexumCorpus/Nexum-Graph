@@ -16,11 +16,10 @@ were authorized, and records the result in a replayable event log.
 The fastest way to understand the product: install `nex` and run `nex start` inside any git repository. It indexes the
 repo, shows the latest semantic diff, and prints the next exact commands to run.
 
-> **Release status (2026-10-19).** The one-step installers fetch **v0.1.0** (March 2026). In v0.1.0, `nex start`, `diff`,
-> `check`, `lock`, `validate`, `log`, `serve`, `auth` and `audit` work. Three newer pieces exist only on `main` until
-> the next release: the `nex github init` / `nex github status` pull-request gate, the `insights-json` and `sarif` output
-> formats, and the GitHub Action (`action.yml`), which needs them. To use those now, build from source
-> (see [I want to build everything from source](#i-want-to-build-everything-from-source)).
+> **Release status (2026-10-19).** The one-step installers fetch **v0.2.0**. It adds the `nex github init` /
+> `nex github status` pull-request gate, the `insights-json` and `sarif` output formats, a working GitHub Action
+> (`action.yml`), and the Night Adversary 0 fixes to cross-file dependency edges and conflict attribution.
+> See [NEWS.md](./NEWS.md) for what changed since v0.1.0 (March 2026).
 
 This repository is the full product codebase:
 
@@ -101,7 +100,7 @@ In practice, that means a few almost-miraculous benefits:
 - Detect merge-risk conflicts between branches with `nex check`.
 - Install a local semantic merge gate with `nex check --install-hook`.
 - Generate visual HTML reports for onboarding, repo snapshots, and PR review with `nex demo --format html`, `nex start --format html`, and `nex check --format html`.
-- Gate pull requests in GitHub Actions with `uses: NexumCorpus/Nexum-Graph@v0.1.0`.
+- Gate pull requests in GitHub Actions with `uses: NexumCorpus/Nexum-Graph@v0.2.0`.
 - Acquire semantic locks on specific units with `nex lock`.
 - Validate lock coverage before commit with `nex validate`.
 - Run a local coordination server with `nex serve`.
@@ -363,7 +362,7 @@ on:
 
 jobs:
   semantic-check:
-    uses: NexumCorpus/Nexum-Graph/.github/workflows/reusable-semantic-check.yml@v0.1.0
+    uses: NexumCorpus/Nexum-Graph/.github/workflows/reusable-semantic-check.yml@v0.2.0
     with:
       format: github
       gate-mode: errors-only
@@ -377,7 +376,7 @@ For advanced/custom workflows, you can still use the composite action directly:
 
 ```yaml
 - id: semantic
-  uses: NexumCorpus/Nexum-Graph@v0.1.0
+  uses: NexumCorpus/Nexum-Graph@v0.2.0
   with:
     format: github
     gate-mode: errors-only
@@ -477,7 +476,7 @@ The repo includes a small toolchain for spec-driven, slice-based development:
 Typical workflow:
 
 ```bash
-python tools/release_tools.py assert-version-parity --tag v0.1.0
+python tools/release_tools.py assert-version-parity --tag v0.2.0
 python tools/verify_slice.py --changed
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
