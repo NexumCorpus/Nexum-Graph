@@ -24,6 +24,36 @@ def git(repo, *args):
     return result.stdout
 
 
+def exact_tree(repo, value, algorithm):
+    tree = value.lower()
+    if len(tree) != 2 * hashlib.new(algorithm).digest_size or any(c not in "0123456789abcdef" for c in tree):
+        raise ValueError(f"Expected a full {algorithm} tree object ID")
+    if git(repo, "cat-file", "-t", tree).strip() != b"tree":
+        raise ValueError("Expected a Git tree object")
+    return tree
+
+
+def compose_trees(args):
+    algorithm = git(args.repo, "rev-parse", "--show-object-format").decode().strip()
+    base = exact_tree(args.repo, args.base, algorithm)
+    left = exact_tree(args.repo, args.left, algorithm)
+    right = exact_tree(args.repo, args.right, algorithm)
+    result = subprocess.run(
+        [*GIT, "-C", str(args.repo), "merge-tree", "--write-tree", "--name-only", "--no-messages",
+         "-z", "--merge-base", base, left, right],
+        capture_output=True, timeout=30,
+    )
+    report = {"base_tree": base, "input_trees": [left, right], "object_format": algorithm}
+    if result.returncode == 1:
+        # A conflicted result also begins with an object ID. It cannot be used as a candidate.
+        paths = [path.decode(errors="replace") for path in result.stdout.split(b"\0")[1:] if path]
+        return {**report, "status": "conflicted", "paths": paths}, 1
+    if result.returncode:
+        raise ValueError(f"git merge-tree: {result.stderr.decode(errors='replace').strip()}")
+    tree = result.stdout.rstrip(b"\0\r\n").decode()
+    return {**report, "status": "composed", "tree": exact_tree(args.repo, tree, algorithm)}, 0
+
+
 def read_entries(repo, tree):
     entries = {}
     windows_paths = {}
@@ -112,11 +142,7 @@ def check_run(args):
     if args.tree is None:
         tree = git(args.repo, "write-tree").decode().strip()
     else:
-        tree = args.tree.lower()
-        if len(tree) != 2 * hashlib.new(algorithm).digest_size or any(c not in "0123456789abcdef" for c in tree):
-            raise ValueError(f"--tree requires a full {algorithm} tree object ID")
-        if git(args.repo, "cat-file", "-t", tree).strip() != b"tree":
-            raise ValueError("--tree requires a Git tree object")
+        tree = exact_tree(args.repo, args.tree, algorithm)
     entries = read_entries(args.repo, tree)
     snapshot = Path(tempfile.mkdtemp(prefix="nexum-tree-", dir=args.scratch.resolve(strict=True)))
     materialize(args.repo, snapshot, entries, algorithm)
@@ -177,6 +203,11 @@ def main():
     run.add_argument("--receipt", type=Path, required=True)
     run.add_argument("--timeout", type=int, default=60)
     run.add_argument("command", nargs=argparse.REMAINDER)
+    compose = actions.add_parser("compose", help="Combine two recorded proposals from a common base tree.")
+    compose.add_argument("--repo", type=Path, default=Path.cwd())
+    compose.add_argument("--base", required=True, help="Full object ID of the starting tree.")
+    compose.add_argument("left", help="Full object ID of the first proposal tree.")
+    compose.add_argument("right", help="Full object ID of the second proposal tree.")
     match = actions.add_parser("match", help="Check a passing receipt against a commit or the active index.")
     match.add_argument("--repo", type=Path, default=Path.cwd())
     match.add_argument("--index", action="store_true", help="Compare the effective Git index visible to this process.")
@@ -185,8 +216,9 @@ def main():
     args = parser.parse_args()
     if args.action == "match" and args.index == (args.commit is not None):
         parser.error("match requires either --index or a commit")
+    handlers = {"run": check_run, "compose": compose_trees, "match": check_match}
     try:
-        report, status = (check_run if args.action == "run" else check_match)(args)
+        report, status = handlers[args.action](args)
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         parser.exit(2, f"{error}\n")
     print(json.dumps(report, ensure_ascii=False))

@@ -654,6 +654,8 @@ The command runs from a snapshot while the worktree and staged file selection st
 
 For parallel checks, run `git write-tree` once and give each worker the resulting full object ID as `run --tree TREE_ID`, with a separate receipt path for each check. The workers read that tree without acquiring the index lock. Use `match` to verify that the index or commit still has the tested tree.
 
+To combine two proposals from the same starting tree, capture each worker's changes in its own worktree and keep the proposal commits reachable. With Git 2.45 or later, run `python tools/verify_tree.py compose --base BASE_TREE LEFT_TREE RIGHT_TREE` with all three full tree IDs. On success the JSON reports the input IDs and a `tree` for `run --tree`. On conflict it reports the paths and exits 1. Keep the JSON with the worker proposals and compare the tested result to the actual landing with `match`.
+
 The snapshot covers regular tracked files. Use a trusted interpreter and test command, with any dependencies provided separately. A receipt is local and unsigned. The snapshots remain available for inspection, including after timeouts. A timed-out command can leave a child process running in the snapshot, and its receipt cannot pass `match`.
 
 If you plan to contribute, start with [CONTRIBUTING.md](./CONTRIBUTING.md).

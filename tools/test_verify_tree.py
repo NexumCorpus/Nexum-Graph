@@ -131,6 +131,49 @@ class VerifyTreeTests(unittest.TestCase):
         self.assertEqual(report["status"], "passed")
         self.assertEqual(report["tree"], tree)
 
+    def test_compose_uses_proposals_instead_of_the_shared_index(self) -> None:
+        source = "opening\nx1\nx2\nx3\nx4\nx5\nclosing\n"
+        self.stage("notes.txt", source)
+        self.git("commit", "--quiet", "-m", "Base")
+        base = self.git("rev-parse", "HEAD^{tree}").stdout.strip()
+        self.stage("notes.txt", source.replace("opening", "first"))
+        left = self.git("write-tree").stdout.strip()
+        self.stage("notes.txt", source.replace("closing", "second"))
+        right = self.git("write-tree").stdout.strip()
+        self.stage("foreign.txt", "another session's work")
+        original_index = self.git("write-tree").stdout.strip()
+
+        composed = self.verify("compose", "--base", base, left, right)
+
+        self.assertEqual(composed["status"], "composed")
+        self.assertEqual(composed["input_trees"], [left, right])
+        self.assertEqual(self.git("write-tree").stdout.strip(), original_index)
+        expected = source.replace("opening", "first").replace("closing", "second")
+        check = (
+            f"from pathlib import Path; assert Path('notes.txt').read_text() == {expected!r}; "
+            "assert not Path('foreign.txt').exists()"
+        )
+        receipt = self.verify(
+            "run", "--tree", composed["tree"], "--scratch", str(self.directory),
+            "--receipt", str(self.receipt), "--", sys.executable, "-B", "-c", check,
+        )
+        self.assertEqual(receipt["status"], "passed")
+        self.git("read-tree", composed["tree"])
+        self.git("commit", "--quiet", "-m", "Land the checked proposals")
+        self.assertTrue(self.verify("match", str(self.receipt), "HEAD")["matched"])
+
+    def test_compose_stops_on_an_overlapping_edit(self) -> None:
+        trees = []
+        for text in ("base", "first", "second"):
+            self.stage("notes.txt", text)
+            trees.append(self.git("write-tree").stdout.strip())
+
+        report = self.verify("compose", "--base", *trees, expected=1)
+
+        self.assertEqual(report["status"], "conflicted")
+        self.assertEqual(report["paths"], ["notes.txt"])
+        self.assertNotIn("tree", report)
+
     def test_timeout_survives_tracked_input_change(self) -> None:
         self.stage("first.txt", "passing")
         check = "from pathlib import Path; import time; Path('first.txt').write_bytes(b'changed'); time.sleep(20)"
