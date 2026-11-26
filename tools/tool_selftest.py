@@ -24,6 +24,8 @@ TOOLS = [
     "tools/verify_slice.py",
     "tools/workspace_doctor.py",
     "tools/test_repo_tools.py",
+    "tools/test_verify_tree.py",
+    "tools/verify_tree.py",
 ]
 
 REPO_SKILLS = [

@@ -89,12 +89,14 @@ class InstallerTests(unittest.TestCase):
             )
 
             with InstallerServer(root) as server:
-                env = os.environ.copy()
+                # A Python child can carry PowerShell 7 module paths into Windows PowerShell 5.1.
+                env = {name: value for name, value in os.environ.items() if name.upper() != "PSMODULEPATH"}
                 env["NEXUM_GRAPH_RELEASE_BASE_URL"] = f"http://127.0.0.1:{server.port}"
                 env["NEXUM_GRAPH_API_URL"] = f"http://127.0.0.1:{server.port}/api/releases/latest.json"
                 completed = subprocess.run(
                     [
                         "powershell",
+                        "-NoProfile",
                         "-ExecutionPolicy",
                         "Bypass",
                         "-File",
@@ -111,8 +113,8 @@ class InstallerTests(unittest.TestCase):
                 )
 
             self.assertEqual(completed.returncode, 0, msg=completed.stderr or completed.stdout)
-            self.assertTrue((install_dir / "nex.exe").exists())
-            self.assertTrue((install_dir / "nex-lsp.exe").exists())
+            self.assertEqual((install_dir / "nex.exe").read_bytes(), b"nex")
+            self.assertEqual((install_dir / "nex-lsp.exe").read_bytes(), b"nex-lsp")
 
     @unittest.skipIf(sys.platform.startswith("win"), "POSIX installer smoke test runs on Unix-like platforms.")
     def test_shell_installer_downloads_and_installs_latest_release(self) -> None:

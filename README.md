@@ -622,6 +622,8 @@ The repo includes a small toolchain for spec-driven, slice-based development:
   Checks the public GitHub repo state and watches tagged release workflows until assets are actually published.
 - `tools/verify_slice.py`
   Runs tests, Clippy, and format checks only for changed crates and downstream dependents.
+- `tools/verify_tree.py`
+  Runs a source check on the exact staged Git tree and checks the receipt against a proposed or landed commit.
 - `tools/workspace_doctor.py`
   Checks repo health, tool availability, and skill sync state.
 - `tools/sync_nex_skills.py`
@@ -640,6 +642,17 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --check
 npm --prefix extensions/vscode test
 ```
+
+For a check that can run from tracked source files alone, use a scratch directory and a fresh receipt filename:
+
+```bash
+mkdir -p ../nexum-checks
+python tools/verify_tree.py run --scratch ../nexum-checks --receipt ../nexum-checks/tree.json -- python -E -s -B tools/test_verify_tree.py
+```
+
+The command runs from a snapshot while the worktree and staged file selection stay available for other work. The receipt records the command, result, and tested tree. A `commit-msg` hook can check the current proposal with `python tools/verify_tree.py match --index ../nexum-checks/tree.json`. After committing, pass the exact commit ID in place of `--index`. The check is opt-in, and the CLI leaves hook configuration to the repository.
+
+The snapshot covers regular tracked files. Use a trusted interpreter and test command, with any dependencies provided separately. A receipt is local and unsigned. The snapshots remain available for inspection, including after timeouts. A timed-out command can leave a child process running in the snapshot, and its receipt cannot pass `match`.
 
 If you plan to contribute, start with [CONTRIBUTING.md](./CONTRIBUTING.md).
 
