@@ -637,6 +637,18 @@ Take the original base and proposal tree IDs from the recorded handoff. Supply t
 
 When a check produces an artifact such as a test report, pass its relative snapshot path with `run --evidence PATH`. The receipt records the generated file's SHA-256 and byte count when available. A missing, unavailable, or timed-out artifact gets its own status. The command's exit and receipt status still describe the test run. For a reviewer who has hashed the report bytes, `match --evidence PATH SHA256` checks the recorded identity alongside the other requested checks. It compares the supplied digest without opening the snapshot path.
 
+### Try a clean merge that breaks a caller
+
+From this checkout, with Python and Git 2.45 or later:
+
+```bash
+python tools/demo_tree_receipts.py --scratch ..
+```
+
+The example creates a disposable Git repository. One proposal changes a function's return type. The other adds a caller that passes its own check. Git combines the edits without a text conflict, and the same pinned caller probe then fails. The script repairs the caller, verifies the repair commit and its generated report, and confirms that changing one report byte invalidates the digest match.
+
+The printed scratch path contains the fixture history, reports, and JSON receipts. For a real handoff, capture each proposal before it shares a worktree with other edits, pin a probe that exercises the behavior your caller relies on, and keep the generated artifact for review.
+
 The snapshot covers regular tracked files. Use a trusted interpreter and test command, with any dependencies provided separately. A receipt is local and unsigned. The snapshots remain available for inspection, including after timeouts. A timed-out command can leave a child process running in the snapshot, and its receipt cannot pass `match`.
 
 If you plan to contribute, start with [CONTRIBUTING.md](./CONTRIBUTING.md).
