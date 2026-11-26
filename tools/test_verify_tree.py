@@ -66,9 +66,9 @@ class VerifyTreeTests(unittest.TestCase):
         (self.repo / name).write_bytes(content.encode("ascii"))
         self.git("add", "--", name)
 
-    def run_check(self, *, expected: int = 0) -> dict:
+    def run_check(self, *options: str, expected: int = 0) -> dict:
         return self.verify(
-            "run", "--scratch", str(self.directory), "--receipt", str(self.receipt),
+            "run", "--scratch", str(self.directory), "--receipt", str(self.receipt), *options,
             "--", sys.executable, "-B", "-c", CHECK, expected=expected,
         )
 
@@ -98,6 +98,38 @@ class VerifyTreeTests(unittest.TestCase):
         self.assertEqual(match["committed_tree"], report["tree"])
         self.assertTrue(match["matched"])
         self.assertEqual((self.repo / "first.txt").read_bytes(), b"failing")
+
+    def test_frozen_tree_runs_while_index_is_locked(self) -> None:
+        self.stage("first.txt", "passing")
+        self.git("commit", "--quiet", "-m", "Keep a passing tree")
+        tree = self.git("rev-parse", "HEAD^{tree}").stdout.strip()
+        self.stage("first.txt", "failing")
+        lock = self.repo / ".git" / "index.lock"
+        lock.touch(exist_ok=False)
+        try:
+            self.git("write-tree", expected=128)
+            report = self.run_check("--tree", tree)
+        finally:
+            lock.unlink()
+
+        self.assertEqual(report["status"], "passed")
+        self.assertEqual(report["tree"], tree)
+        self.assertTrue(self.verify("match", str(self.receipt), "HEAD")["matched"])
+        match = self.verify("match", "--index", str(self.receipt), expected=1)
+        self.assertFalse(match["same_tree"])
+        self.assertTrue(match["passed_receipt"])
+
+    def test_frozen_tree_reads_the_named_object(self) -> None:
+        self.stage("first.txt", "passing")
+        tree = self.git("write-tree").stdout.strip()
+        self.stage("first.txt", "failing")
+        replacement = self.git("write-tree").stdout.strip()
+        self.git("replace", tree, replacement)
+
+        report = self.run_check("--tree", tree.upper())
+
+        self.assertEqual(report["status"], "passed")
+        self.assertEqual(report["tree"], tree)
 
     def test_timeout_survives_tracked_input_change(self) -> None:
         self.stage("first.txt", "passing")

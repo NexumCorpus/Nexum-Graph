@@ -1,4 +1,4 @@
-"""Run a check on a staged Git tree and match the receipt before or after a commit."""
+"""Run a check on an exact Git tree and match the receipt before or after a commit."""
 
 import argparse
 import hashlib
@@ -11,13 +11,14 @@ import tempfile
 
 
 SCHEMA = "nexum-tree-check-v1"
+GIT = ["git", "--no-replace-objects"]
 BLOCKED_NAMES = {".git", ".env", "auth.json", "config.json"}
 BLOB_CHUNK_BYTES = 1024 * 1024
 is_reserved_path = getattr(os.path, "isreserved", lambda name: PureWindowsPath(name).is_reserved())
 
 
 def git(repo, *args):
-    result = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, timeout=30)
+    result = subprocess.run([*GIT, "-C", str(repo), *args], capture_output=True, timeout=30)
     if result.returncode:
         raise ValueError(f"git {args[0]}: {result.stderr.decode(errors='replace').strip()}")
     return result.stdout
@@ -62,7 +63,7 @@ def blob_id(source, size, algorithm, output=None):
 
 
 def materialize(repo, directory, entries, algorithm):
-    command = ["git", "-C", str(repo), "cat-file", "--batch"]
+    command = [*GIT, "-C", str(repo), "cat-file", "--batch"]
     with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE) as process:
         with process.stdin as requests, process.stdout as blobs:
             for name, (mode, oid) in entries.items():
@@ -107,8 +108,15 @@ def check_run(args):
     if args.receipt.exists():
         raise ValueError(f"Receipt already exists: {args.receipt}")
 
-    tree = git(args.repo, "write-tree").decode().strip()
     algorithm = git(args.repo, "rev-parse", "--show-object-format").decode().strip()
+    if args.tree is None:
+        tree = git(args.repo, "write-tree").decode().strip()
+    else:
+        tree = args.tree.lower()
+        if len(tree) != 2 * hashlib.new(algorithm).digest_size or any(c not in "0123456789abcdef" for c in tree):
+            raise ValueError(f"--tree requires a full {algorithm} tree object ID")
+        if git(args.repo, "cat-file", "-t", tree).strip() != b"tree":
+            raise ValueError("--tree requires a Git tree object")
     entries = read_entries(args.repo, tree)
     snapshot = Path(tempfile.mkdtemp(prefix="nexum-tree-", dir=args.scratch.resolve(strict=True)))
     materialize(args.repo, snapshot, entries, algorithm)
@@ -162,8 +170,9 @@ def check_match(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     actions = parser.add_subparsers(dest="action", required=True)
-    run = actions.add_parser("run", help="Capture the index and run a check in its own directory.")
+    run = actions.add_parser("run", help="Check the index tree or a supplied tree in its own directory.")
     run.add_argument("--repo", type=Path, default=Path.cwd())
+    run.add_argument("--tree", help="Full tree object ID. When omitted, capture the current index.")
     run.add_argument("--scratch", type=Path, required=True)
     run.add_argument("--receipt", type=Path, required=True)
     run.add_argument("--timeout", type=int, default=60)

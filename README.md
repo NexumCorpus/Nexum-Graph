@@ -652,6 +652,8 @@ python tools/verify_tree.py run --scratch ../nexum-checks --receipt ../nexum-che
 
 The command runs from a snapshot while the worktree and staged file selection stay available for other work. The receipt records the command, result, and tested tree. A `commit-msg` hook can check the current proposal with `python tools/verify_tree.py match --index ../nexum-checks/tree.json`. After committing, pass the exact commit ID in place of `--index`. The check is opt-in, and the CLI leaves hook configuration to the repository.
 
+For parallel checks, run `git write-tree` once and give each worker the resulting full object ID as `run --tree TREE_ID`, with a separate receipt path for each check. The workers read that tree without acquiring the index lock. Use `match` to verify that the index or commit still has the tested tree.
+
 The snapshot covers regular tracked files. Use a trusted interpreter and test command, with any dependencies provided separately. A receipt is local and unsigned. The snapshots remain available for inspection, including after timeouts. A timed-out command can leave a child process running in the snapshot, and its receipt cannot pass `match`.
 
 If you plan to contribute, start with [CONTRIBUTING.md](./CONTRIBUTING.md).
