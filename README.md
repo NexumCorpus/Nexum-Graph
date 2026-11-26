@@ -635,6 +635,8 @@ python tools/verify_tree.py match --composition BASE_TREE PROPOSAL_TREE TARGET_C
 
 Take the original base and proposal tree IDs from the recorded handoff. Supply the full target commit ID. The check reports the recomputed tree or conflict paths and leaves refs as they are. If a branch moves again, recompute against its new tip. For automated local ref updates, pass the verified target commit as the expected old value to `git update-ref`.
 
+When a check produces an artifact such as a test report, pass its relative snapshot path with `run --evidence PATH`. The receipt records the generated file's SHA-256 and byte count when available. A missing, unavailable, or timed-out artifact gets its own status. The command's exit and receipt status still describe the test run. For a reviewer who has hashed the report bytes, `match --evidence PATH SHA256` checks the recorded identity alongside the other requested checks. It compares the supplied digest without opening the snapshot path.
+
 The snapshot covers regular tracked files. Use a trusted interpreter and test command, with any dependencies provided separately. A receipt is local and unsigned. The snapshots remain available for inspection, including after timeouts. A timed-out command can leave a child process running in the snapshot, and its receipt cannot pass `match`.
 
 If you plan to contribute, start with [CONTRIBUTING.md](./CONTRIBUTING.md).

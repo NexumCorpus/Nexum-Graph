@@ -59,6 +59,15 @@ def check_compose(args):
     return compose_trees(args.repo, args.base, args.left, args.right, algorithm)
 
 
+def snapshot_parts(name):
+    parts = name.split("/")
+    if any(part in ("", ".", "..") or part.casefold() in BLOCKED_NAMES or "\\" in part or ":" in part
+           or "\0" in part or (os.name == "nt" and (part.endswith((" ", ".")) or is_reserved_path(part)))
+           for part in parts):
+        return None
+    return parts
+
+
 def read_entries(repo, tree):
     entries = {}
     windows_paths = {}
@@ -67,12 +76,10 @@ def read_entries(repo, tree):
             continue
         info, name = record.decode("utf-8").split("\t", 1)
         mode, kind, oid = info.split()
-        parts = name.split("/")
         if mode not in ("100644", "100755") or kind != "blob":
             raise ValueError(f"Unsupported tree entry: {name} ({mode})")
-        if any(part in ("", ".", "..") or part.casefold() in BLOCKED_NAMES or "\\" in part or ":" in part
-               or (os.name == "nt" and (part.endswith((" ", ".")) or is_reserved_path(part)))
-               for part in parts):
+        parts = snapshot_parts(name)
+        if parts is None:
             raise ValueError(f"Refusing tree path: {name}")
         if os.name == "nt":
             for index in range(1, len(parts) + 1):
@@ -81,6 +88,11 @@ def read_entries(repo, tree):
                     raise ValueError(f"Case-colliding tree path: {name}")
         entries[name] = (mode, oid)
     return entries
+
+
+def is_link(info):
+    reparse = getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+    return bool(stat.S_ISLNK(info.st_mode) or reparse)
 
 
 def blob_id(source, size, algorithm, output=None):
@@ -124,8 +136,7 @@ def unchanged(directory, name, mode, oid, algorithm):
         for part in ("", *name.split("/")):
             path = path / part
             info = path.lstat()
-            reparse = getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
-            if stat.S_ISLNK(info.st_mode) or reparse:
+            if is_link(info):
                 return False
     except (FileNotFoundError, NotADirectoryError):
         return False
@@ -134,6 +145,46 @@ def unchanged(directory, name, mode, oid, algorithm):
         return False
     with path.open("rb") as file:
         return blob_id(file, info.st_size, algorithm) == oid and not file.read(1)
+
+
+def file_identity(info):
+    return (info.st_dev, info.st_ino, info.st_mode, info.st_nlink, info.st_size,
+            info.st_mtime_ns)
+
+
+def record_evidence(snapshot, name, parts):
+    path = snapshot
+    unavailable = {"path": name, "status": "unavailable"}
+    try:
+        for part in ("", *parts):
+            path = path / part
+            info = path.lstat()
+            if is_link(info):
+                return unavailable
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            return unavailable
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        identity = file_identity(info)
+        with os.fdopen(os.open(path, flags), "rb") as stream:
+            if file_identity(os.fstat(stream.fileno())) != identity:
+                return unavailable
+            digest = hashlib.sha256()
+            remaining = info.st_size
+            while remaining:
+                chunk = stream.read(min(remaining, BLOB_CHUNK_BYTES))
+                if not chunk:
+                    return unavailable
+                digest.update(chunk)
+                remaining -= len(chunk)
+            final = path.lstat()
+            if (stream.read(1) or file_identity(os.fstat(stream.fileno())) != identity
+                    or file_identity(final) != identity or final.st_ctime_ns != info.st_ctime_ns):
+                return unavailable
+    except FileNotFoundError:
+        return {"path": name, "status": "missing"}
+    except OSError:
+        return unavailable
+    return {"path": name, "status": "recorded", "size": info.st_size, "sha256": digest.hexdigest()}
 
 
 def probe_binding(repo, spec, algorithm):
@@ -152,6 +203,9 @@ def check_run(args):
         raise ValueError("Pass a positive timeout and either a command after -- or --probe TREE PATH")
     if args.receipt.exists():
         raise ValueError(f"Receipt already exists: {args.receipt}")
+    evidence_parts = snapshot_parts(args.evidence) if args.evidence is not None else None
+    if args.evidence is not None and evidence_parts is None:
+        raise ValueError("Expected a relative snapshot evidence path")
 
     algorithm = git(args.repo, "rev-parse", "--show-object-format").decode().strip()
     if args.tree is None:
@@ -168,6 +222,8 @@ def check_run(args):
         command = [sys.executable, "-I", "-B", "-X", "utf8", str(probe_folder / probe_path)]
     snapshot = Path(tempfile.mkdtemp(prefix="nexum-tree-", dir=scratch))
     materialize(args.repo, snapshot, entries, algorithm)
+    if evidence_parts and snapshot.joinpath(*evidence_parts).exists():
+        raise ValueError("Evidence must be generated by the check")
 
     # Do not pass Git's source index or worktree overrides into the check.
     environment = {name: value for name, value in os.environ.items() if not name.startswith("GIT_")}
@@ -192,6 +248,9 @@ def check_run(args):
         if probe_changed and status != "timed_out":
             receipt["status"] = "probe_changed"
         receipt.update(probe=probe, probe_changed=probe_changed)
+    if evidence_parts:
+        receipt["evidence"] = ({"path": args.evidence, "status": "unobserved"} if status == "timed_out"
+                               else record_evidence(snapshot, args.evidence, evidence_parts))
     with args.receipt.open("x", encoding="utf-8") as output:
         json.dump(receipt, output, indent=2)
         output.write("\n")
@@ -221,6 +280,16 @@ def check_match(args):
         same_probe = receipt.get("probe") == expected_probe and receipt.get("probe_changed") is False
         target["same_probe"] = same_probe
         matched = matched and same_probe
+    if args.evidence:
+        name, digest = args.evidence
+        digest = digest.lower()
+        if snapshot_parts(name) is None or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+            raise ValueError("Expected a relative evidence path and full SHA-256 digest")
+        evidence = receipt.get("evidence")
+        same_evidence = (isinstance(evidence, dict) and evidence.get("status") == "recorded"
+                         and evidence.get("path") == name and evidence.get("sha256") == digest)
+        target["same_evidence"] = same_evidence
+        matched = matched and same_evidence
     if args.composition:
         base, proposal, onto = args.composition
         onto = exact_oid(args.repo, onto, algorithm, "commit")
@@ -246,6 +315,7 @@ def main():
     run.add_argument("--repo", type=Path, default=Path.cwd())
     run.add_argument("--tree", help="Full tree object ID. When omitted, capture the current index.")
     run.add_argument("--probe", nargs=2, metavar=("TREE", "PATH"), help="Run a Python probe from a pinned tree.")
+    run.add_argument("--evidence", metavar="PATH", help="Record a generated file's digest from the snapshot.")
     run.add_argument("--scratch", type=Path, required=True)
     run.add_argument("--receipt", type=Path, required=True)
     run.add_argument("--timeout", type=int, default=60)
@@ -259,6 +329,8 @@ def main():
     match.add_argument("--repo", type=Path, default=Path.cwd())
     match.add_argument("--index", action="store_true", help="Compare the effective Git index visible to this process.")
     match.add_argument("--probe", nargs=2, metavar=("TREE", "PATH"), help="Require the same pinned probe.")
+    match.add_argument("--evidence", nargs=2, metavar=("PATH", "SHA256"),
+                       help="Require the expected evidence path and digest.")
     match.add_argument("--composition", nargs=3, metavar=("BASE_TREE", "PROPOSAL_TREE", "ONTO_COMMIT"),
                        help="Require a commit to replay the recorded proposal onto the exact target commit.")
     match.add_argument("receipt", type=Path)

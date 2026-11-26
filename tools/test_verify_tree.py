@@ -72,6 +72,58 @@ class VerifyTreeTests(unittest.TestCase):
             "--", sys.executable, "-B", "-c", CHECK, expected=expected,
         )
 
+    def test_generated_evidence_matches_the_exact_name_and_bytes(self) -> None:
+        self.stage("first.txt", "passing")
+        name = "results/caller.xml"
+        payload = b"<testcase name='caller'/>"
+        check = (
+            "from pathlib import Path; Path('results').mkdir(); "
+            f"Path({name!r}).write_bytes({payload!r})"
+        )
+        receipt = self.verify(
+            "run", "--evidence", name, "--scratch", str(self.directory), "--receipt", str(self.receipt),
+            "--", sys.executable, "-B", "-c", check,
+        )
+        digest = hashlib.sha256(payload).hexdigest()
+        self.assertEqual(receipt["evidence"], {"path": name, "status": "recorded",
+                                               "size": len(payload), "sha256": digest})
+        result = self.verify("match", "--index", "--evidence", name, digest, str(self.receipt))
+        self.assertTrue(result["same_evidence"] and result["matched"])
+        changed = payload + b"\n"
+        (Path(receipt["snapshot"]) / name).write_bytes(changed)
+        for path, expected_digest in ((name, hashlib.sha256(changed).hexdigest()), ("other.xml", digest)):
+            result = self.verify("match", "--index", "--evidence", path, expected_digest,
+                                 str(self.receipt), expected=1)
+            self.assertTrue(result["same_tree"] and result["passed_receipt"])
+            self.assertFalse(result["same_evidence"])
+        self.assertTrue(self.verify("match", "--index", str(self.receipt))["matched"])
+
+    def test_missing_evidence_and_existing_or_invalid_paths(self) -> None:
+        self.stage("first.txt", "passing")
+        report = self.run_check("--evidence", "absent.xml")
+        self.assertEqual(report["evidence"], {"path": "absent.xml", "status": "missing"})
+        result = self.verify("match", "--index", "--evidence", "absent.xml", "0" * 64,
+                             str(self.receipt), expected=1)
+        self.assertTrue(result["passed_receipt"])
+        self.assertFalse(result["same_evidence"])
+        for name in ("first.txt", "../outside.xml", "results.xml:stream", ".env"):
+            receipt = self.directory / "rejected.json"
+            result = self.run_command(
+                sys.executable, "-B", str(VERIFY_TREE), "run", "--evidence", name, "--scratch", str(self.directory),
+                "--receipt", str(receipt), "--", sys.executable, "-B", "-c", CHECK, expected=2,
+            )
+            self.assertTrue(result.stderr)
+            self.assertFalse(receipt.exists())
+
+    def test_evidence_does_not_hash_a_second_link_to_an_input(self) -> None:
+        self.stage("first.txt", "passing")
+        name = "linked.xml"
+        receipt = self.verify(
+            "run", "--evidence", name, "--scratch", str(self.directory), "--receipt", str(self.receipt),
+            "--", sys.executable, "-B", "-c", f"from os import link; link('first.txt', {name!r})",
+        )
+        self.assertEqual(receipt["evidence"], {"path": name, "status": "unavailable"})
+
     def test_unstaged_pass_does_not_mask_staged_failure(self) -> None:
         self.stage("first.txt", "failing")
         (self.repo / "first.txt").write_bytes(b"passing")
@@ -270,16 +322,20 @@ class VerifyTreeTests(unittest.TestCase):
 
     def test_timeout_survives_tracked_input_change(self) -> None:
         self.stage("first.txt", "passing")
-        check = "from pathlib import Path; import time; Path('first.txt').write_bytes(b'changed'); time.sleep(20)"
+        check = (
+            "from pathlib import Path; import time; Path('first.txt').write_bytes(b'changed'); "
+            "Path('witness.json').write_bytes(b'{}'); time.sleep(20)"
+        )
 
         report = self.verify(
             "run", "--scratch", str(self.directory), "--receipt", str(self.receipt), "--timeout", "1",
-            "--", sys.executable, "-B", "-c", check, expected=1,
+            "--evidence", "witness.json", "--", sys.executable, "-B", "-c", check, expected=1,
         )
 
         self.assertEqual(report["status"], "timed_out")
         self.assertIsNone(report["test_exit"])
         self.assertEqual(report["changed_tracked_inputs"], ["first.txt"])
+        self.assertEqual(report["evidence"], {"path": "witness.json", "status": "unobserved"})
         self.assertEqual((self.repo / "first.txt").read_bytes(), b"passing")
         match = self.verify("match", "--index", str(self.receipt), expected=1)
         self.assertTrue(match["same_tree"])
