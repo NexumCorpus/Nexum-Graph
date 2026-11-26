@@ -206,6 +206,7 @@ class VerifyTreeTests(unittest.TestCase):
         self.assertTrue(self.verify("match", str(self.receipt), "HEAD")["matched"])
 
     def test_compose_stops_on_an_overlapping_edit(self) -> None:
+        self.stage("first.txt", "passing")
         trees = []
         for text in ("base", "first", "second"):
             self.stage("notes.txt", text)
@@ -216,6 +217,56 @@ class VerifyTreeTests(unittest.TestCase):
         self.assertEqual(report["status"], "conflicted")
         self.assertEqual(report["paths"], ["notes.txt"])
         self.assertNotIn("tree", report)
+
+        base, proposal, onto_tree = trees
+        onto = self.git("commit-tree", onto_tree, "-m", "Target edit").stdout.strip()
+        candidate = self.git("commit-tree", proposal, "-p", onto, "-m", "Conflicting proposal").stdout.strip()
+        self.run_check("--tree", proposal)
+        comparison = self.verify("match", "--composition", base, proposal, onto,
+                                 str(self.receipt), candidate, expected=1)
+        self.assertTrue(comparison["same_tree"])
+        self.assertTrue(comparison["composition"]["same_parent"])
+        self.assertFalse(comparison["composition"]["same_composed_tree"])
+        self.assertEqual(comparison["composition"]["status"], "conflicted")
+        self.assertEqual(comparison["composition"]["paths"], ["notes.txt"])
+
+    def test_composition_match_checks_both_the_tree_and_the_first_parent(self) -> None:
+        self.stage("probe.py", "from pathlib import Path\nassert Path('first.txt').read_text() == 'passing'\n")
+        self.stage("first.txt", "passing")
+        self.git("commit", "--quiet", "-m", "Base")
+        base_commit = self.git("rev-parse", "HEAD").stdout.strip()
+        base = self.git("rev-parse", "HEAD^{tree}").stdout.strip()
+        self.stage("worker.txt", "worker change")
+        proposal = self.git("write-tree").stdout.strip()
+        self.git("read-tree", base)
+        self.stage("target.txt", "new target change")
+        self.git("commit", "--quiet", "-m", "Target advance")
+        onto = self.git("rev-parse", "HEAD").stdout.strip()
+        onto_tree = self.git("rev-parse", "HEAD^{tree}").stdout.strip()
+        composed = self.verify("compose", "--base", base, onto_tree, proposal)["tree"]
+        self.assertEqual(self.git("show", f"{composed}:target.txt").stdout.strip(), "new target change")
+        self.assertEqual(self.git("show", f"{composed}:worker.txt").stdout.strip(), "worker change")
+
+        stale = self.git("commit-tree", proposal, "-p", onto, "-m", "Drop target change").stdout.strip()
+        self.verify("run", "--tree", proposal, "--probe", base, "probe.py",
+                    "--scratch", str(self.directory), "--receipt", str(self.receipt))
+        self.assertTrue(self.verify("match", "--probe", base, "probe.py", str(self.receipt), stale)["matched"])
+        options = ("--probe", base, "probe.py", "--composition", base, proposal, onto)
+        stale_match = self.verify("match", *options, str(self.receipt), stale, expected=1)
+        self.assertTrue(stale_match["same_tree"] and stale_match["passed_receipt"] and stale_match["same_probe"])
+        self.assertTrue(stale_match["composition"]["same_parent"])
+        self.assertFalse(stale_match["composition"]["same_composed_tree"])
+
+        fresh_receipt = self.directory / "fresh.json"
+        self.verify("run", "--tree", composed, "--probe", base, "probe.py",
+                    "--scratch", str(self.directory), "--receipt", str(fresh_receipt))
+        fresh = self.git("commit-tree", composed, "-p", onto, "-m", "Preserve target change").stdout.strip()
+        self.assertTrue(self.verify("match", *options, str(fresh_receipt), fresh)["matched"])
+        wrong_parent = self.git("commit-tree", composed, "-p", base_commit, "-p", onto,
+                                "-m", "Target on the wrong side").stdout.strip()
+        wrong_match = self.verify("match", *options, str(fresh_receipt), wrong_parent, expected=1)
+        self.assertTrue(wrong_match["composition"]["same_composed_tree"])
+        self.assertFalse(wrong_match["composition"]["same_parent"])
 
     def test_timeout_survives_tracked_input_change(self) -> None:
         self.stage("first.txt", "passing")

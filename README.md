@@ -627,6 +627,14 @@ python tools/verify_tree.py match --probe BASE_TREE tools/old_caller.py ../nexum
 
 The probe runs from a separate copy with the tested snapshot as the working directory. Use `Path.cwd()` to locate the candidate's files. The receipt records the source tree, file path and blob ID. `match --probe` requires that same probe and a passing result for the target tree.
 
+If the target branch advances, use `compose --base BASE_TREE TARGET_TREE PROPOSAL_TREE` to replay the recorded aggregate proposal onto the new target. Run the check on that result. After creating the candidate commit, require its tree and first parent to match that composition:
+
+```bash
+python tools/verify_tree.py match --composition BASE_TREE PROPOSAL_TREE TARGET_COMMIT --probe BASE_TREE tools/old_caller.py ../nexum-checks/candidate.json CANDIDATE_COMMIT
+```
+
+Take the original base and proposal tree IDs from the recorded handoff. Supply the full target commit ID. The check reports the recomputed tree or conflict paths and leaves refs as they are. If a branch moves again, recompute against its new tip. For automated local ref updates, pass the verified target commit as the expected old value to `git update-ref`.
+
 The snapshot covers regular tracked files. Use a trusted interpreter and test command, with any dependencies provided separately. A receipt is local and unsigned. The snapshots remain available for inspection, including after timeouts. A timed-out command can leave a child process running in the snapshot, and its receipt cannot pass `match`.
 
 If you plan to contribute, start with [CONTRIBUTING.md](./CONTRIBUTING.md).

@@ -25,22 +25,21 @@ def git(repo, *args):
     return result.stdout
 
 
-def exact_tree(repo, value, algorithm):
-    tree = value.lower()
-    if len(tree) != 2 * hashlib.new(algorithm).digest_size or any(c not in "0123456789abcdef" for c in tree):
-        raise ValueError(f"Expected a full {algorithm} tree object ID")
-    if git(repo, "cat-file", "-t", tree).strip() != b"tree":
-        raise ValueError("Expected a Git tree object")
-    return tree
+def exact_oid(repo, value, algorithm, kind="tree"):
+    oid = value.lower()
+    if len(oid) != 2 * hashlib.new(algorithm).digest_size or any(c not in "0123456789abcdef" for c in oid):
+        raise ValueError(f"Expected a full {algorithm} {kind} object ID")
+    if git(repo, "cat-file", "-t", oid).decode().strip() != kind:
+        raise ValueError(f"Expected a Git {kind} object")
+    return oid
 
 
-def compose_trees(args):
-    algorithm = git(args.repo, "rev-parse", "--show-object-format").decode().strip()
-    base = exact_tree(args.repo, args.base, algorithm)
-    left = exact_tree(args.repo, args.left, algorithm)
-    right = exact_tree(args.repo, args.right, algorithm)
+def compose_trees(repo, base, left, right, algorithm):
+    base = exact_oid(repo, base, algorithm)
+    left = exact_oid(repo, left, algorithm)
+    right = exact_oid(repo, right, algorithm)
     result = subprocess.run(
-        [*GIT, "-C", str(args.repo), "merge-tree", "--write-tree", "--name-only", "--no-messages",
+        [*GIT, "-C", str(repo), "merge-tree", "--write-tree", "--name-only", "--no-messages",
          "-z", "--merge-base", base, left, right],
         capture_output=True, timeout=30,
     )
@@ -52,7 +51,12 @@ def compose_trees(args):
     if result.returncode:
         raise ValueError(f"git merge-tree: {result.stderr.decode(errors='replace').strip()}")
     tree = result.stdout.rstrip(b"\0\r\n").decode()
-    return {**report, "status": "composed", "tree": exact_tree(args.repo, tree, algorithm)}, 0
+    return {**report, "status": "composed", "tree": exact_oid(repo, tree, algorithm)}, 0
+
+
+def check_compose(args):
+    algorithm = git(args.repo, "rev-parse", "--show-object-format").decode().strip()
+    return compose_trees(args.repo, args.base, args.left, args.right, algorithm)
 
 
 def read_entries(repo, tree):
@@ -134,7 +138,7 @@ def unchanged(directory, name, mode, oid, algorithm):
 
 def probe_binding(repo, spec, algorithm):
     source, path = spec
-    tree = exact_tree(repo, source, algorithm)
+    tree = exact_oid(repo, source, algorithm)
     mode_and_blob = read_entries(repo, tree).get(path)
     if mode_and_blob is None:
         raise ValueError(f"No probe at {path} in tree {tree}")
@@ -153,7 +157,7 @@ def check_run(args):
     if args.tree is None:
         tree = git(args.repo, "write-tree").decode().strip()
     else:
-        tree = exact_tree(args.repo, args.tree, algorithm)
+        tree = exact_oid(args.repo, args.tree, algorithm)
     entries = read_entries(args.repo, tree)
     scratch = args.scratch.resolve(strict=True)
     probe = probe_binding(args.repo, args.probe, algorithm) if args.probe else None
@@ -217,6 +221,20 @@ def check_match(args):
         same_probe = receipt.get("probe") == expected_probe and receipt.get("probe_changed") is False
         target["same_probe"] = same_probe
         matched = matched and same_probe
+    if args.composition:
+        base, proposal, onto = args.composition
+        onto = exact_oid(args.repo, onto, algorithm, "commit")
+        onto_tree = git(args.repo, "rev-parse", onto + "^{tree}").decode().strip()
+        composition, status = compose_trees(args.repo, base, onto_tree, proposal, algorithm)
+        headers = git(args.repo, "cat-file", "commit", commit).split(b"\n\n", 1)[0]
+        first_parent = next((line[7:].decode() for line in headers.splitlines() if line.startswith(b"parent ")), None)
+        same_parent = first_parent == onto
+        same_composed_tree = status == 0 and composition["tree"] == tree
+        target["composition"] = {
+            **composition, "onto_commit": onto, "first_parent": first_parent,
+            "same_parent": same_parent, "same_composed_tree": same_composed_tree,
+        }
+        matched = matched and same_parent and same_composed_tree
     return {**target, "tested_tree": receipt.get("tree"),
             "same_tree": same_tree, "passed_receipt": passed, "matched": matched}, int(not matched)
 
@@ -241,12 +259,16 @@ def main():
     match.add_argument("--repo", type=Path, default=Path.cwd())
     match.add_argument("--index", action="store_true", help="Compare the effective Git index visible to this process.")
     match.add_argument("--probe", nargs=2, metavar=("TREE", "PATH"), help="Require the same pinned probe.")
+    match.add_argument("--composition", nargs=3, metavar=("BASE_TREE", "PROPOSAL_TREE", "ONTO_COMMIT"),
+                       help="Require a commit to replay the recorded proposal onto the exact target commit.")
     match.add_argument("receipt", type=Path)
     match.add_argument("commit", nargs="?")
     args = parser.parse_args()
     if args.action == "match" and args.index == (args.commit is not None):
         parser.error("match requires either --index or a commit")
-    handlers = {"run": check_run, "compose": compose_trees, "match": check_match}
+    if args.action == "match" and args.index and args.composition:
+        parser.error("match --composition requires a commit with a first parent")
+    handlers = {"run": check_run, "compose": check_compose, "match": check_match}
     try:
         report, status = handlers[args.action](args)
     except (OSError, ValueError, subprocess.SubprocessError) as error:
