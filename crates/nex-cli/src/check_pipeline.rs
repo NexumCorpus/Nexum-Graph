@@ -3,7 +3,7 @@ use nex_core::{CodexError, CodexResult, ConflictReport, atomic_write_bytes};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
-const CHECK_HOOK_NAME: &str = "pre-merge-commit";
+const CHECK_HOOK_NAME: &str = "commit-msg";
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -41,7 +41,7 @@ pub fn install_check_hook(repo_path: &Path, force: bool) -> CodexResult<CheckHoo
     })?;
     let (hooks_dir, uses_custom_hooks_path) = resolve_hooks_dir(&repo, workdir)?;
     let hook_path = hooks_dir.join(CHECK_HOOK_NAME);
-    let script = pre_merge_commit_hook_script();
+    let script = merge_check_hook_script();
     let script_bytes = script.as_bytes();
 
     let status = match std::fs::read(&hook_path) {
@@ -77,7 +77,7 @@ pub fn check_hook_status(repo_path: &Path) -> CodexResult<CheckHookStatus> {
     })?;
     let (hooks_dir, uses_custom_hooks_path) = resolve_hooks_dir(&repo, workdir)?;
     let hook_path = hooks_dir.join(CHECK_HOOK_NAME);
-    let expected = pre_merge_commit_hook_script().into_bytes();
+    let expected = merge_check_hook_script().into_bytes();
 
     let (installed, matches_expected) = match std::fs::read(&hook_path) {
         Ok(existing) => (true, existing == expected),
@@ -94,9 +94,15 @@ pub fn check_hook_status(repo_path: &Path) -> CodexResult<CheckHookStatus> {
     })
 }
 
-pub fn pre_merge_commit_hook_script() -> String {
+pub fn merge_check_hook_script() -> String {
     r#"#!/usr/bin/env sh
 set -eu
+
+# Git writes MERGE_HEAD after pre-merge-commit and before commit-msg.
+merge_heads=$(git rev-parse --git-path MERGE_HEAD)
+if [ ! -s "$merge_heads" ]; then
+    exit 0
+fi
 
 if command -v nex >/dev/null 2>&1; then
     nex_bin=nex
@@ -107,15 +113,11 @@ else
     exit 1
 fi
 
-repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-merge_head=$(git rev-parse --verify MERGE_HEAD 2>/dev/null || true)
-
-if [ -z "$merge_head" ]; then
-    exit 0
-fi
-
-printf 'nex check hook: checking HEAD against %s\n' "$merge_head" >&2
-exec "$nex_bin" check HEAD "$merge_head" --repo-path "$repo_root" --format text
+repo_root=$(git rev-parse --show-toplevel)
+while IFS= read -r merge_head; do
+    printf 'nex check hook: checking HEAD against %s\n' "$merge_head" >&2
+    "$nex_bin" check HEAD "$merge_head" --repo-path "$repo_root" --format text
+done < "$merge_heads"
 "#
     .to_string()
 }
@@ -134,7 +136,7 @@ fn resolve_hooks_dir(repo: &Repository, workdir: &Path) -> CodexResult<(PathBuf,
             Ok((resolved, true))
         }
         Err(err) if err.class() == git2::ErrorClass::Config => {
-            Ok((repo.path().join("hooks"), false))
+            Ok((repo.commondir().join("hooks"), false))
         }
         Err(err) => Err(CodexError::Git(err.to_string())),
     }

@@ -13,8 +13,8 @@ The `nex-graph` and `nex-coord` layers carry infrastructure-grade correctness re
 
 ## Graph Diff Invariants
 
-- `CodeGraph::diff()` matches units by `qualified_name`, not insertion order or `SemanticId`.
-- A qualified name may appear in at most one diff bucket: `added`, `removed`, `modified`, or `moved`.
+- `CodeGraph::diff()` matches units by `qualified_name` and file path first. It pairs a remaining name across paths only when one unmatched unit remains on each side. Different files can declare the same name without either unit hiding the other.
+- A unit at a particular location may appear in at most one diff bucket: `added`, `removed`, `modified`, or `moved`.
 - A unit is `moved` only when `signature_hash` and `body_hash` are unchanged and `file_path` changes.
 - A unit is `modified` when either `signature_hash` or `body_hash` changes, even if `file_path` also changes.
 - Dependency edges do not affect diff classification; they affect coordination and validation later, not unit identity.

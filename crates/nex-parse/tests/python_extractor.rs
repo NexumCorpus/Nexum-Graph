@@ -12,6 +12,81 @@ fn py_extractor() -> Box<dyn SemanticExtractor> {
 }
 
 #[test]
+fn module_calls_keep_file_identity_and_leave_function_calls_with_their_owners() {
+    let extractor = py_extractor();
+    let source = br#"
+from reports import write_report
+
+if __name__ == "__main__":
+    write_report("extra.tsv", ["north"])
+
+def later():
+    write_report("later.tsv", ["south"])
+
+deferred = lambda: write_report("deferred.tsv", ["west"])
+"#;
+    let mut units = extractor
+        .extract(
+            Path::new("reports.py"),
+            b"def write_report(path, rows): pass\n",
+        )
+        .unwrap();
+    let target = units[0].id;
+    units.extend(extractor.extract(Path::new("extra.py"), source).unwrap());
+    units.extend(extractor.extract(Path::new("other.py"), source).unwrap());
+    let module_calls: Vec<_> = units
+        .iter()
+        .filter(|unit| unit.kind == UnitKind::Module)
+        .collect();
+    assert_eq!(module_calls.len(), 2);
+    assert_ne!(
+        module_calls[0].qualified_name,
+        module_calls[1].qualified_name
+    );
+
+    let edges = extractor.dependencies(&units, source).unwrap();
+    for unit in &units[1..] {
+        assert!(
+            edges.contains(&(unit.id, target, DepKind::Calls)),
+            "{}",
+            unit.qualified_name
+        );
+    }
+    assert_eq!(
+        edges
+            .iter()
+            .filter(|edge| edge.1 == target && edge.2 == DepKind::Calls)
+            .count(),
+        6
+    );
+}
+
+#[test]
+fn reassigned_module_name_does_not_reference_the_old_import() {
+    let extractor = py_extractor();
+    let source = br#"
+from reports import write_report
+
+def replacement():
+    return 'archive'
+
+write_report = replacement
+write_report()
+"#;
+    let mut units = extractor
+        .extract(Path::new("reports.py"), b"def write_report(path): pass\n")
+        .unwrap();
+    let old_target = units[0].id;
+    units.extend(extractor.extract(Path::new("extra.py"), source).unwrap());
+    let caller = units
+        .iter()
+        .find(|unit| unit.kind == UnitKind::Module)
+        .unwrap();
+    let edges = extractor.dependencies(&units, source).unwrap();
+    assert!(!edges.contains(&(caller.id, old_target, DepKind::Calls)));
+}
+
+#[test]
 fn extracts_top_level_function_and_class_methods() {
     let source = br#"
 def greet(name: str) -> str:

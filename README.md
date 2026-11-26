@@ -46,9 +46,12 @@ curl -fsSL https://raw.githubusercontent.com/NexumCorpus/Nexum-Graph/main/instal
 
 ```powershell
 irm https://raw.githubusercontent.com/NexumCorpus/Nexum-Graph/main/install.ps1 | iex
+$env:Path = "$HOME\.nex\bin;$env:Path"
 ```
 
-Then run:
+The second Windows command makes `nex` available in this PowerShell session.
+
+Open the Git repository you want to inspect and run:
 
 ```bash
 nex start
@@ -128,9 +131,12 @@ Windows PowerShell:
 
 ```powershell
 irm https://raw.githubusercontent.com/NexumCorpus/Nexum-Graph/main/install.ps1 | iex
+$env:Path = "$HOME\.nex\bin;$env:Path"
 ```
 
 ### 2. Prove the product in one command
+
+Run this from inside the Git repository you want to inspect:
 
 ```bash
 nex start
@@ -151,75 +157,29 @@ If you prefer to build from source instead, jump to `I want to build everything 
 `nex check` compares two branches. To see it work before you pick branches of your own, run the bundled demo. It
 builds a throwaway repo in a temp directory with two branches: `feature/a` adds a parameter to `compute_total` and
 renames `format_name`; `feature/b` adds new code that calls both the old way. Git merges them without a conflict.
-A third branch, `feature/c`, makes an unrelated change and is the control. Needs `git` and `nex` on PATH.
+Merging `feature/b` with `feature/c` is the working control. The demo requires Git, Nexum and Python 3 on PATH.
+Set `NEX` or `PYTHON` to select an executable.
+
+In v0.2.0, Python calls made directly at module scope can be absent from the
+dependency graph. Keep running your normal runtime checks alongside `nex check`.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/NexumCorpus/Nexum-Graph/main/examples/merge-risk-demo.sh | sh
 # or, from a clone:  sh examples/merge-risk-demo.sh
 ```
 
-On Windows, run it from Git Bash. Captured output (v0.2.0; the merge-base hash differs on every run):
+On Windows, run it from Git Bash. This example uses the published v0.2.0 binary.
 
 ```text
-== git merge-tree feature/a feature/b (does git see a conflict?)
-git: merges cleanly
-
-== nex check feature/a feature/b (expected: exit 1, 3 errors)
-Conflict Check: feature/a vs feature/b
-Merge base: f956212548e5d33f91999a64e4c4b7c620835a82
-=====================================
-Merge risk: High merge risk (100/100)
-Summary: 3 blocking semantic error(s) detected across feature/a and feature/b.
-Errors:   3
-Warnings: 0
-
-Why this scored this way:
-  - 3 blocking semantic error(s) must be resolved before merge.
-  - Callers on one branch expect outdated function signatures (2 cases), including `compute_total`.
-  - One branch removed units that the other branch still depends on, including `format_name`.
-
-Recommended next actions:
-  - Resolve blocking semantic conflicts before merge.
-  - Update or restore callers and dependents that still point at removed units.
-  - Rebase the caller branch and update call sites to the current signature.
-  - Rerun `nex check feature/a feature/b` after rebasing or reconciling the branches.
-
-Conflicts:
-
-[ERROR] SignatureMismatch: Branch A changed signature of `compute_total` but branch B calls it
-  Suggestion: Update callers in branch B to match new signature
-
-[ERROR] SignatureMismatch: Branch A changed signature of `compute_total` but branch B calls it
-  Suggestion: Update callers in branch B to match new signature
-
-[ERROR] DeletedDependency: Branch A deleted `format_name` but branch B depends on it via `report`
-  Suggestion: Consider keeping `format_name` or updating callers in branch B
-
-Exit code: 1
-
-exit 1
-
-== nex check feature/b feature/c (control; expected: exit 0)
-Conflict Check: feature/b vs feature/c
-Merge base: f956212548e5d33f91999a64e4c4b7c620835a82
-=====================================
-Merge risk: Clean semantic check (0/100)
-Summary: No blocking semantic conflicts detected between feature/b and feature/c.
-Errors:   0
-Warnings: 0
-
-Why this scored this way:
-  - No blocking semantic conflicts detected.
-
-Recommended next actions:
-  - Merge is a good candidate; keep the semantic hook and PR check enabled.
-Exit code: 0
-
-exit 0
+broken: nex exit 1, 3 finding(s), report .git/demo-broken.json
+control: nex exit 0, 0 finding(s), report .git/demo-control.json
+broken: Git merged; Python reproduced the removed import and stale call
+control: Git merged; Python returned the expected report and banner
 ```
 
-`compute_total` is reported twice for its one call site in `report.py`. The rename shows up as a deletion of
-`format_name`, which is what it means for `feature/b`.
+The demo exits nonzero if the checker misses either broken call in `report.py`, flags the control, or disagrees with
+the observed Python outcomes. It saves both JSON reports and preserves the merge commits as `proof/broken` and
+`proof/control` in the demo repo. The third finding in the example is the existing stale call in `app.py`.
 
 Inside that demo repo, `nex diff` prints this and exits 0:
 
@@ -242,7 +202,7 @@ Modified:
   ~ Function compute_total [signature, body]
 ```
 
-and `nex start` (exit 0):
+With `nex` built from this source, `nex start` prints the `commit-msg` guard path and exits 0:
 
 ```text
 $ git checkout feature/a && nex start
@@ -254,7 +214,7 @@ Indexed files: 2
 Semantic units: 3
 Dependency edges: 1
 Current diff preview: ready (1 added, 1 modified, 1 removed, 0 moved)
-Merge guard: not installed (<repo>/.git/hooks/pre-merge-commit)
+Merge guard: not installed (<repo>/.git/hooks/commit-msg)
 Server auth: not configured
 
 Next steps
@@ -263,7 +223,7 @@ Next steps
    See the exact semantic changes behind the current repo snapshot.
    nex diff HEAD~1 HEAD
 2. [recommended] Install the semantic merge guard
-   Install a local pre-merge hook so merge commits run `nex check` before they land.
+   Check incoming branches when Git is about to create a merge commit.
    nex check --install-hook
 3. [recommended] Install the GitHub pull request gate
    Write the reusable GitHub workflow so pull requests get semantic comments, SARIF, and merge-risk artifacts.
@@ -490,7 +450,9 @@ nex check --install-hook
 nex check feature/a feature/b --format html > nex-check-report.html
 ```
 
-`nex check --install-hook` installs a `pre-merge-commit` git hook for the current repo. On local merges, Git will run `nex check HEAD MERGE_HEAD` before the merge commit is created.
+`nex check --install-hook` installs a `commit-msg` hook for the current repo. When Git prepares a merge commit, the hook compares `HEAD` with each incoming commit recorded in `MERGE_HEAD`. A blocking branch finding stops the merge commit. The check uses the committed parents, so edits made while resolving a merge do not change the branch comparison.
+
+Run the installer again to upgrade a repo with the older `pre-merge-commit` hook. The installer preserves an existing `commit-msg` hook unless you pass `--force` to replace it.
 
 ### GitHub pull request gate
 

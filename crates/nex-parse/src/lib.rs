@@ -115,6 +115,16 @@ pub(crate) fn resolve_source_paths<'a>(
     units: &[SemanticUnit],
     analyzed: impl IntoIterator<Item = &'a SemanticUnit>,
 ) -> Vec<std::path::PathBuf> {
+    resolve_source_paths_with_names(units, analyzed, |unit, _| {
+        std::borrow::Cow::Borrowed(&unit.qualified_name)
+    })
+}
+
+pub(crate) fn resolve_source_paths_with_names<'a>(
+    units: &[SemanticUnit],
+    analyzed: impl IntoIterator<Item = &'a SemanticUnit>,
+    name_at: impl for<'b> Fn(&'b SemanticUnit, &Path) -> std::borrow::Cow<'b, str>,
+) -> Vec<std::path::PathBuf> {
     let analyzed: Vec<&SemanticUnit> = analyzed.into_iter().collect();
     let Some(probe) = analyzed.first() else {
         return Vec::new();
@@ -125,7 +135,7 @@ pub(crate) fn resolve_source_paths<'a>(
         if unit.byte_range == probe.byte_range
             && unit.body_hash == probe.body_hash
             && unit.signature_hash == probe.signature_hash
-            && unit.qualified_name == probe.qualified_name
+            && unit.qualified_name.as_str() == name_at(probe, &unit.file_path).as_ref()
             && !candidates.contains(&unit.file_path.as_path())
         {
             candidates.push(unit.file_path.as_path());
@@ -142,7 +152,7 @@ pub(crate) fn resolve_source_paths<'a>(
         .filter(|path| {
             analyzed.iter().all(|unit| {
                 known_ids.contains(&semantic_unit_id(
-                    &unit.qualified_name,
+                    &name_at(unit, path),
                     path,
                     unit.body_hash,
                 ))

@@ -2,10 +2,11 @@
 //!
 //! Implements SemanticExtractor using tree-sitter-python.
 //! Extracts: function_definition, class_definition, decorated methods/functions,
-//! and named lambda assignments.
+//! named lambda assignments, and calls made by module-level statements.
 
 use crate::SemanticExtractor;
 use nex_core::{CodexError, CodexResult, DepKind, SemanticId, SemanticUnit, UnitKind};
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::path::Path;
@@ -21,7 +22,8 @@ pub struct PythonExtractor;
 struct UnitInfo {
     unit: SemanticUnit,
     body_range: Option<Range<usize>>,
-    heritage: Vec<(String, DepKind)>,
+    references: Vec<(String, DepKind)>,
+    imported_calls: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -58,6 +60,82 @@ impl PythonExtractor {
         let root = tree.root_node();
         let mut units = Vec::new();
         self.collect_program_units(root, path, source, &mut units)?;
+        let mut calls = Vec::new();
+        collect_module_calls(root, &mut calls);
+        let imports = top_level_from_imports(root, source);
+        let bindings = direct_call_bindings(root, source, &imports);
+        if !bindings.is_empty() {
+            for info in &mut units {
+                let Some(body) = info
+                    .body_range
+                    .as_ref()
+                    .and_then(|range| find_node_by_range(root, range))
+                else {
+                    continue;
+                };
+                info.imported_calls = collect_called_names(body, source)
+                    .into_iter()
+                    .filter(|(_, is_bare)| *is_bare)
+                    .filter_map(|(name, _)| {
+                        let (end, target) = bindings.get(&name)?;
+                        // The caller might run before a later import executes.
+                        (*end <= info.unit.byte_range.start).then(|| (name, target.clone()))
+                    })
+                    .collect();
+                if !info.imported_calls.is_empty() {
+                    let mut targets: Vec<_> = info.imported_calls.iter().collect();
+                    targets.sort_unstable();
+                    // Changing an import can change what a caller does with the same body.
+                    let binding_text: Vec<_> = targets
+                        .iter()
+                        .map(|(name, target)| format!("{name}={target}"))
+                        .collect();
+                    let unit = &mut info.unit;
+                    unit.body_hash = hash_u64(
+                        format!("{:016x}:{}", unit.body_hash, binding_text.join(",")).as_bytes(),
+                    );
+                    unit.id = crate::semantic_unit_id(
+                        &unit.qualified_name,
+                        &unit.file_path,
+                        unit.body_hash,
+                    );
+                }
+            }
+        }
+        let mut occurrences = HashMap::new();
+        for call in calls {
+            let Some(name) = call
+                .child_by_field_name("function")
+                .filter(|callee| callee.kind() == "identifier")
+                .and_then(|callee| node_text(callee, source))
+            else {
+                continue;
+            };
+            let target = bindings
+                .get(&name)
+                .filter(|(end, _)| *end <= call.start_byte())
+                .map_or(name.as_str(), |(_, imported)| imported.as_str());
+            let body_hash = hash_u64(
+                format!("{:016x}:{target}", normalized_body_hash(call, source)).as_bytes(),
+            );
+            let occurrence = occurrences.entry(body_hash).or_insert(0);
+            *occurrence += 1;
+            let label = format!("<call {name} {body_hash:016x}:{occurrence}>");
+            units.push(UnitInfo {
+                unit: build_unit(
+                    UnitKind::Module,
+                    label.clone(),
+                    module_call_name(path, &label),
+                    path,
+                    call.byte_range(),
+                    hash_u64(b""),
+                    body_hash,
+                ),
+                body_range: None,
+                references: vec![(target.to_owned(), DepKind::Calls)],
+                imported_calls: HashMap::new(),
+            });
+        }
         Ok((tree, units))
     }
 
@@ -167,7 +245,8 @@ impl PythonExtractor {
                 body.map_or_else(|| hash_u64(b""), |body| normalized_body_hash(body, source)),
             ),
             body_range: None,
-            heritage: collect_class_heritage(node, source),
+            references: collect_class_heritage(node, source),
+            imported_calls: HashMap::new(),
         });
 
         let Some(body) = body else {
@@ -228,7 +307,8 @@ impl PythonExtractor {
                 body.map_or_else(|| hash_u64(b""), |body| normalized_body_hash(body, source)),
             ),
             body_range: body.map(|body| body.byte_range()),
-            heritage: Vec::new(),
+            references: Vec::new(),
+            imported_calls: HashMap::new(),
         })
     }
 
@@ -255,7 +335,8 @@ impl PythonExtractor {
                 body.map_or_else(|| hash_u64(b""), |body| normalized_body_hash(body, source)),
             ),
             body_range: body.map(|body| body.byte_range()),
-            heritage: Vec::new(),
+            references: Vec::new(),
+            imported_calls: HashMap::new(),
         })
     }
 
@@ -285,7 +366,8 @@ impl PythonExtractor {
                 body.map_or_else(|| hash_u64(b""), |body| normalized_body_hash(body, source)),
             ),
             body_range: body.map(|body| body.byte_range()),
-            heritage: Vec::new(),
+            references: Vec::new(),
+            imported_calls: HashMap::new(),
         })
     }
 }
@@ -313,8 +395,11 @@ impl SemanticExtractor for PythonExtractor {
         // resolved from content rather than assumed to be the first unit's.
         let (tree, analyzed_units) = self.analyze(Path::new("<memory.py>"), source)?;
         let root = tree.root_node();
-        let source_paths =
-            crate::resolve_source_paths(units, analyzed_units.iter().map(|info| &info.unit));
+        let source_paths = crate::resolve_source_paths_with_names(
+            units,
+            analyzed_units.iter().map(|info| &info.unit),
+            python_name_at,
+        );
 
         let unit_by_id: HashMap<SemanticId, &UnitInfo> = source_paths
             .iter()
@@ -322,7 +407,7 @@ impl SemanticExtractor for PythonExtractor {
                 analyzed_units.iter().map(move |info| {
                     (
                         crate::semantic_unit_id(
-                            &info.unit.qualified_name,
+                            &python_name_at(&info.unit, path),
                             path,
                             info.unit.body_hash,
                         ),
@@ -332,12 +417,12 @@ impl SemanticExtractor for PythonExtractor {
             })
             .collect();
 
-        let mut ids_by_name: HashMap<&str, Vec<SemanticId>> = HashMap::new();
+        let mut units_by_name: HashMap<&str, Vec<&SemanticUnit>> = HashMap::new();
         for unit in units.iter().filter(|unit| is_python_unit(unit)) {
-            ids_by_name
+            units_by_name
                 .entry(unit.name.as_str())
                 .or_default()
-                .push(unit.id);
+                .push(unit);
         }
 
         let imports = collect_imports(root, source);
@@ -348,11 +433,18 @@ impl SemanticExtractor for PythonExtractor {
                 continue;
             };
 
-            for (target_name, dep_kind) in &info.heritage {
-                if let Some(target_ids) = ids_by_name.get(target_name.as_str()) {
-                    for target_id in target_ids {
-                        if *target_id != unit.id {
-                            edges.insert((unit.id, *target_id, *dep_kind));
+            for (target_name, dep_kind) in &info.references {
+                if unit.kind == UnitKind::Module {
+                    if let Some(target) =
+                        module_dependency(&units_by_name, &unit.file_path, target_name)
+                        && target.id != unit.id
+                    {
+                        edges.insert((unit.id, target.id, *dep_kind));
+                    }
+                } else if let Some(targets) = units_by_name.get(target_name.as_str()) {
+                    for target in targets {
+                        if target.id != unit.id {
+                            edges.insert((unit.id, target.id, *dep_kind));
                         }
                     }
                 }
@@ -366,11 +458,21 @@ impl SemanticExtractor for PythonExtractor {
             };
 
             let called_names = collect_called_names(body_node, source);
-            for called_name in called_names {
-                if let Some(target_ids) = ids_by_name.get(called_name.as_str()) {
-                    for target_id in target_ids {
-                        if *target_id != unit.id {
-                            edges.insert((unit.id, *target_id, DepKind::Calls));
+            for (called_name, is_bare) in called_names {
+                if is_bare
+                    && let Some(target_name) = info.imported_calls.get(&called_name)
+                    && let Some(target) =
+                        module_dependency(&units_by_name, &unit.file_path, target_name)
+                {
+                    if target.id != unit.id {
+                        edges.insert((unit.id, target.id, DepKind::Calls));
+                    }
+                    continue;
+                }
+                if let Some(targets) = units_by_name.get(called_name.as_str()) {
+                    for target in targets {
+                        if target.id != unit.id {
+                            edges.insert((unit.id, target.id, DepKind::Calls));
                         }
                     }
                 }
@@ -396,6 +498,67 @@ impl SemanticExtractor for PythonExtractor {
                 .then(dep_kind_rank(left.2).cmp(&dep_kind_rank(right.2)))
         });
         Ok(edges)
+    }
+}
+
+fn module_dependency<'a>(
+    units_by_name: &HashMap<&str, Vec<&'a SemanticUnit>>,
+    caller_path: &Path,
+    target: &str,
+) -> Option<&'a SemanticUnit> {
+    let (module, name) = target
+        .rsplit_once('.')
+        .map_or((None, target), |(m, n)| (Some(m), n));
+    let mut candidates = units_by_name.get(name)?.iter().copied().filter(|unit| {
+        unit.qualified_name == name
+            && module.map_or(unit.file_path == caller_path, |module| {
+                is_imported_from(caller_path, module, &unit.file_path)
+            })
+    });
+    let found = candidates.next()?;
+    candidates.next().is_none().then_some(found)
+}
+
+fn is_imported_from(caller: &Path, module: &str, definition: &Path) -> bool {
+    let levels = module.bytes().take_while(|ch| *ch == b'.').count();
+    let module_path: std::path::PathBuf = module
+        .trim_start_matches('.')
+        .split('.')
+        .filter(|part| !part.is_empty())
+        .collect();
+    let package_init = module_path.join("__init__.py");
+    let module_file = module_path.with_extension("py");
+    if levels == 0 {
+        definition.ends_with(&module_file) || definition.ends_with(&package_init)
+    } else if let Some(parent) = caller.ancestors().nth(levels) {
+        definition == parent.join(module_file) || definition == parent.join(package_init)
+    } else {
+        false
+    }
+}
+
+fn module_call_name(path: &Path, label: &str) -> String {
+    format!("{}::{label}", path.display())
+}
+
+fn python_name_at<'a>(unit: &'a SemanticUnit, path: &Path) -> Cow<'a, str> {
+    if unit.kind == UnitKind::Module {
+        Cow::Owned(module_call_name(path, &unit.name))
+    } else {
+        Cow::Borrowed(&unit.qualified_name)
+    }
+}
+
+fn collect_module_calls<'tree>(node: Node<'tree>, calls: &mut Vec<Node<'tree>>) {
+    match node.kind() {
+        // Existing named declarations own their own call edges.
+        "function_definition" | "class_definition" | "decorated_definition" | "lambda" => return,
+        "call" => calls.push(node),
+        _ => {}
+    }
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        collect_module_calls(child, calls);
     }
 }
 
@@ -495,6 +658,61 @@ fn collect_imports(root: Node<'_>, source: &[u8]) -> Vec<ImportSymbol> {
     imports
 }
 
+fn top_level_from_imports(root: Node<'_>, source: &[u8]) -> Vec<(usize, ImportSymbol)> {
+    let mut cursor = root.walk();
+    root.named_children(&mut cursor)
+        .filter(|node| node.kind() == "import_from_statement")
+        .flat_map(|node| {
+            import_symbols_from_statement(node, source)
+                .into_iter()
+                .map(move |symbol| (node.end_byte(), symbol))
+        })
+        .collect()
+}
+
+fn direct_call_bindings(
+    root: Node<'_>,
+    source: &[u8],
+    imports: &[(usize, ImportSymbol)],
+) -> HashMap<String, (usize, String)> {
+    let mut bindings = HashMap::new();
+    for (end, import) in imports {
+        bindings
+            .entry(import.local_name.clone())
+            .and_modify(|value| *value = None)
+            .or_insert_with(|| Some((*end, import.module_name.clone())));
+    }
+
+    // A name used outside its top-level from-import or a bare call may be rebound.
+    // In those cases keep the existing heuristic rather than claiming a precise binding.
+    let mut nodes = vec![(root, false)];
+    while let Some((node, in_top_level_import)) = nodes.pop() {
+        if bindings.is_empty() || node.kind() == "wildcard_import" {
+            return HashMap::new();
+        }
+        if node.kind() == "identifier"
+            && !in_top_level_import
+            && !node.parent().is_some_and(|parent| {
+                parent.kind() == "call" && parent.child_by_field_name("function") == Some(node)
+            })
+            && let Some(name) = node_text(node, source)
+        {
+            bindings.remove(&name);
+        }
+        let in_top_level_import = in_top_level_import
+            || (node.kind() == "import_from_statement" && node.parent() == Some(root));
+        let mut cursor = node.walk();
+        nodes.extend(
+            node.named_children(&mut cursor)
+                .map(|child| (child, in_top_level_import)),
+        );
+    }
+    bindings
+        .into_iter()
+        .filter_map(|(name, target)| target.map(|target| (name, target)))
+        .collect()
+}
+
 fn collect_imports_recursive(node: Node<'_>, source: &[u8], imports: &mut Vec<ImportSymbol>) {
     if matches!(
         node.kind(),
@@ -587,18 +805,22 @@ fn import_symbols_from_statement(node: Node<'_>, source: &[u8]) -> Vec<ImportSym
     }
 }
 
-fn collect_called_names(node: Node<'_>, source: &[u8]) -> HashSet<String> {
+fn collect_called_names(node: Node<'_>, source: &[u8]) -> HashSet<(String, bool)> {
     let mut names = HashSet::new();
     collect_called_names_recursive(node, source, &mut names);
     names
 }
 
-fn collect_called_names_recursive(node: Node<'_>, source: &[u8], names: &mut HashSet<String>) {
+fn collect_called_names_recursive(
+    node: Node<'_>,
+    source: &[u8],
+    names: &mut HashSet<(String, bool)>,
+) {
     if node.kind() == "call"
         && let Some(function_node) = node.child_by_field_name("function")
         && let Some(name) = callee_name(function_node, source)
     {
-        names.insert(name);
+        names.insert((name, function_node.kind() == "identifier"));
     }
 
     let mut cursor = node.walk();

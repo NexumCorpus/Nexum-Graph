@@ -80,8 +80,7 @@ pub async fn run_start(
                     hook.hook_path.display()
                 )
             } else {
-                "Install a local pre-merge hook so merge commits run `nex check` before they land."
-                    .to_string()
+                "Check incoming branches when Git is about to create a merge commit.".to_string()
             },
         },
         StartStep {

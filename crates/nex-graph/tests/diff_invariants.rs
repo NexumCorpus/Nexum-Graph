@@ -79,6 +79,37 @@ fn spec_strategy() -> impl Strategy<Value = UnitSpec> {
     })
 }
 
+#[test]
+fn diff_preserves_same_named_units_in_different_files() {
+    let original = UnitSpec {
+        path_key: 0,
+        signature_hash: 1,
+        body_hash: 2,
+    };
+    let unrelated = UnitSpec {
+        path_key: 1,
+        ..original
+    };
+    let updated = UnitSpec {
+        signature_hash: 3,
+        ..original
+    };
+    let mut before = CodeGraph::new();
+    before.add_unit(unit_from_spec(0, &original));
+    before.add_unit(unit_from_spec(0, &unrelated));
+    let mut after = CodeGraph::new();
+    after.add_unit(unit_from_spec(0, &unrelated));
+    after.add_unit(unit_from_spec(0, &updated));
+
+    let diff = before.diff(&after);
+    assert_eq!(diff.modified.len(), 1);
+    assert_eq!(
+        diff.modified[0].after.file_path,
+        PathBuf::from(file_path(0))
+    );
+    assert!(diff.added.is_empty() && diff.removed.is_empty() && diff.moved.is_empty());
+}
+
 proptest! {
     #[test]
     fn diff_is_empty_for_identical_graphs_even_when_edges_vary(
