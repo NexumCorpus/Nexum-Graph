@@ -99,6 +99,193 @@ fn create_branch_at(repo: &git2::Repository, name: &str, oid: git2::Oid) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
+fn python_named_call_uses_its_import_binding_across_branches() {
+    let (_dir, repo) = init_temp_repo();
+    let old_writer = "def emit(topic): return topic\n";
+    let relay_body = "\ndef relay():\n    return emit('west')\n";
+    write_and_stage(&repo, "routes/messages.py", old_writer);
+    write_and_stage(&repo, "routes/archive.py", old_writer);
+    write_and_stage(
+        &repo,
+        "routes/relay.py",
+        &format!("from .messages import emit\n{relay_body}"),
+    );
+    let base = commit(&repo, "independent writers and message relay");
+
+    create_branch_at(&repo, "updated", base);
+    write_and_stage(
+        &repo,
+        "routes/messages.py",
+        "def emit(topic, prefix): return prefix + topic\n",
+    );
+    write_and_stage(
+        &repo,
+        "routes/relay.py",
+        &format!("from .archive import emit\n{relay_body}"),
+    );
+    commit(
+        &repo,
+        "require a prefix and retarget the relay without editing its body",
+    );
+
+    for (branch, caller, expected) in [
+        (
+            "archive",
+            "from .archive import emit\n\ndef export():\n    return emit('west')\n",
+            0,
+        ),
+        (
+            "message",
+            "from .messages import emit\n\ndef export():\n    return emit('west')\n",
+            1,
+        ),
+        (
+            "alias",
+            "from .messages import emit as send\n\ndef export():\n    return send('west')\n",
+            1,
+        ),
+        (
+            "shadowed",
+            "from .messages import emit as send\n\ndef export(send):\n    return send('west')\n",
+            0,
+        ),
+        (
+            "before-import",
+            "def export():\n    return len('west')\n\nexport()\n\nfrom .messages import emit as len\n",
+            0,
+        ),
+    ] {
+        create_branch_at(&repo, branch, base);
+        write_and_stage(&repo, "routes/runner.py", caller);
+        commit(&repo, branch);
+
+        let report = ConflictDetector::detect(repo.workdir().unwrap(), "updated", branch).unwrap();
+        assert_eq!(report.conflicts.len(), expected, "{branch}");
+        for conflict in report.conflicts {
+            assert_eq!(conflict.severity, Severity::Error);
+            assert!(matches!(
+                conflict.kind,
+                ConflictKind::SignatureMismatch { .. }
+            ));
+            assert_eq!(conflict.unit_a.file_path, Path::new("routes/messages.py"));
+            assert_eq!(conflict.unit_b.file_path, Path::new("routes/runner.py"));
+        }
+    }
+}
+
+#[test]
+fn python_module_scope_call_survives_only_when_its_statement_survives() {
+    let (_dir, repo) = init_temp_repo();
+    let old_writer = "def write_report(path, rows): pass\n";
+    let new_writer = "def write_report(path, rows, encoding): pass\n";
+    let old_caller = "from reports import write_report\nwrite_report('daily.tsv', ['north'])\n";
+    write_and_stage(&repo, "reports.py", old_writer);
+    write_and_stage(&repo, "summaries.py", old_writer);
+    write_and_stage(&repo, "daily.py", old_caller);
+    let base = commit(&repo, "writer and module caller");
+
+    create_branch_at(&repo, "updated", base);
+    write_and_stage(&repo, "reports.py", new_writer);
+    write_and_stage(
+        &repo,
+        "daily.py",
+        "from reports import write_report\nwrite_report('daily.tsv', ['north'], 'utf-8')\n",
+    );
+    commit(&repo, "update signature and existing call");
+
+    create_branch_at(&repo, "added_caller", base);
+    write_and_stage(
+        &repo,
+        "extra.py",
+        "from reports import write_report\nwrite_report('extra.tsv', ['north'])\n",
+    );
+    commit(&repo, "add module call using old signature");
+
+    create_branch_at(&repo, "unrelated", base);
+    write_and_stage(
+        &repo,
+        "summaries.py",
+        "def write_report(path, rows, separator=' '): pass\n",
+    );
+    write_and_stage(
+        &repo,
+        "summary.py",
+        "from summaries import write_report as emit\nemit('summary.tsv', ['north'])\n",
+    );
+    commit(&repo, "add harmless summary");
+
+    create_branch_at(&repo, "unfixed", base);
+    write_and_stage(&repo, "reports.py", new_writer);
+    write_and_stage(
+        &repo,
+        "daily.py",
+        &format!("{old_caller}print('finished')\n"),
+    );
+    commit(&repo, "leave stale call with a different module edit");
+
+    let path = repo.workdir().unwrap();
+    let report = ConflictDetector::detect(path, "updated", "added_caller").unwrap();
+    assert_eq!(report.conflicts.len(), 1);
+    assert_eq!(report.conflicts[0].severity, Severity::Error);
+    assert!(matches!(
+        report.conflicts[0].kind,
+        ConflictKind::SignatureMismatch { .. }
+    ));
+    assert_eq!(report.conflicts[0].unit_b.file_path, Path::new("extra.py"));
+    assert!(
+        ConflictDetector::detect(path, "updated", "unrelated")
+            .unwrap()
+            .conflicts
+            .is_empty()
+    );
+
+    let report = ConflictDetector::detect(path, "unfixed", "unrelated").unwrap();
+    assert_eq!(report.conflicts.len(), 1);
+    assert_eq!(report.conflicts[0].unit_b.file_path, Path::new("daily.py"));
+}
+
+#[test]
+fn python_module_call_follows_an_unambiguous_move_with_a_same_named_peer() {
+    let (_dir, repo) = init_temp_repo();
+    let old_writer = "def write_report(path, rows): pass\n";
+    write_and_stage(&repo, "reports.py", old_writer);
+    write_and_stage(&repo, "summaries.py", old_writer);
+    let base = commit(&repo, "two report writers");
+
+    create_branch_at(&repo, "updated", base);
+    write_and_stage(
+        &repo,
+        "reports.py",
+        "def write_report(path, rows, encoding): pass\n",
+    );
+    commit(&repo, "require encoding");
+
+    create_branch_at(&repo, "moved_report", base);
+    remove_and_stage(&repo, "reports.py");
+    write_and_stage(&repo, "relocated.py", old_writer);
+    write_and_stage(
+        &repo,
+        "daily.py",
+        "from relocated import write_report\nwrite_report('daily.tsv', ['north'])\n",
+    );
+    commit(&repo, "move one writer and add a module call");
+
+    let report =
+        ConflictDetector::detect(repo.workdir().unwrap(), "updated", "moved_report").unwrap();
+    assert_eq!(report.conflicts.len(), 1);
+    assert_eq!(report.conflicts[0].severity, Severity::Error);
+    assert!(matches!(
+        report.conflicts[0].kind,
+        ConflictKind::SignatureMismatch { .. }
+    ));
+    assert_eq!(
+        report.conflicts[0].unit_a.file_path,
+        Path::new("reports.py")
+    );
+    assert_eq!(report.conflicts[0].unit_b.file_path, Path::new("daily.py"));
+}
+
+#[test]
 fn clean_merge_no_conflicts() {
     let (_dir, repo) = init_temp_repo();
 

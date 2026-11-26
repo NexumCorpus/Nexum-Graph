@@ -1,12 +1,13 @@
 use clap::Parser;
 use nex_cli::check_pipeline::{
-    CheckHookInstallStatus, install_check_hook, pre_merge_commit_hook_script,
+    CheckHookInstallStatus, install_check_hook, merge_check_hook_script,
 };
 use nex_cli::cli::{Cli, Commands};
 use nex_cli::output::format_report;
 use nex_core::{ConflictKind, ConflictReport, SemanticConflict, SemanticUnit, Severity, UnitKind};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 fn sample_unit(id_byte: u8, qualified_name: &str) -> SemanticUnit {
     SemanticUnit {
@@ -122,19 +123,19 @@ fn check_command_parses_install_hook_without_refs() {
 }
 
 #[test]
-fn install_check_hook_writes_default_pre_merge_hook() {
+fn install_check_hook_writes_default_commit_message_hook() {
     let (_dir, repo) = setup_repo();
     let repo_path = repo.workdir().unwrap();
 
     let result = install_check_hook(repo_path, false).expect("install hook");
-    let hook_path = repo.path().join("hooks").join("pre-merge-commit");
+    let hook_path = repo.path().join("hooks").join("commit-msg");
 
     assert_eq!(result.hook_path, hook_path);
     assert_eq!(result.status, CheckHookInstallStatus::Installed);
     assert!(!result.uses_custom_hooks_path);
     assert_eq!(
         std::fs::read_to_string(&hook_path).expect("read hook"),
-        pre_merge_commit_hook_script()
+        merge_check_hook_script()
     );
 }
 
@@ -148,7 +149,7 @@ fn install_check_hook_uses_custom_hooks_path_when_configured() {
         .expect("set hooks path");
 
     let result = install_check_hook(repo_path, false).expect("install hook");
-    let hook_path = repo_path.join(".githooks").join("pre-merge-commit");
+    let hook_path = repo_path.join(".githooks").join("commit-msg");
 
     assert_eq!(result.hook_path, hook_path);
     assert!(result.uses_custom_hooks_path);
@@ -159,7 +160,7 @@ fn install_check_hook_uses_custom_hooks_path_when_configured() {
 fn install_check_hook_requires_force_to_replace_existing_script() {
     let (_dir, repo) = setup_repo();
     let repo_path = repo.workdir().unwrap();
-    let hook_path = repo.path().join("hooks").join("pre-merge-commit");
+    let hook_path = repo.path().join("hooks").join("commit-msg");
     std::fs::create_dir_all(hook_path.parent().expect("hook dir")).expect("create hook dir");
     std::fs::write(&hook_path, "#!/usr/bin/env sh\necho custom\n").expect("write custom hook");
 
@@ -173,7 +174,7 @@ fn install_check_hook_requires_force_to_replace_existing_script() {
     assert_eq!(forced.status, CheckHookInstallStatus::Updated);
     assert_eq!(
         std::fs::read_to_string(&hook_path).expect("read updated hook"),
-        pre_merge_commit_hook_script()
+        merge_check_hook_script()
     );
 }
 
@@ -187,6 +188,112 @@ fn install_check_hook_is_idempotent_when_current_script_is_present() {
 
     assert_eq!(first.status, CheckHookInstallStatus::Installed);
     assert_eq!(second.status, CheckHookInstallStatus::Unchanged);
+}
+
+#[test]
+fn installed_hook_gates_real_merge_commits_in_linked_worktree() {
+    let (dir, repo) = setup_repo();
+    let workdir = dir.path().join("linked");
+    let output = Command::new("git")
+        .current_dir(repo.workdir().expect("fixture workdir"))
+        .args(["worktree", "add", "--detach"])
+        .arg(&workdir)
+        .output()
+        .expect("create a linked worktree");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let base = repo.head().unwrap().target().unwrap().to_string();
+    let bin_dir = Path::new(env!("CARGO_BIN_EXE_nex")).parent().unwrap();
+    let path = std::env::var_os("PATH").expect("PATH");
+    let path = std::env::join_paths(
+        std::iter::once(bin_dir.to_owned()).chain(std::env::split_paths(&path)),
+    )
+    .expect("test PATH");
+    let git = |args: &[&str]| {
+        Command::new("git")
+            .current_dir(&workdir)
+            .env("PATH", &path)
+            .args(args)
+            .output()
+            .expect("run git")
+    };
+    let git_ok = |args: &[&str]| {
+        let output = git(args);
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    };
+    let write_commit = |file: &str, source: &str, message: &str| {
+        std::fs::write(workdir.join(file), source).expect("write fixture source");
+        git_ok(&["add", "--", file]);
+        git_ok(&["commit", "-m", message]);
+    };
+
+    git_ok(&["config", "commit.gpgsign", "false"]);
+    git_ok(&["config", "core.autocrlf", "false"]);
+    git_ok(&["switch", "-c", "change-signature"]);
+    write_commit(
+        "handler.ts",
+        r#"function validate(input: string, strict: boolean): boolean { return strict && input.length > 0; }
+function processRequest(req: string): void { validate(req, true); }
+"#,
+        "update signature and existing caller",
+    );
+    git_ok(&["switch", "-c", "add-stale-call", &base]);
+    write_commit(
+        "report.ts",
+        r#"function report(): boolean { return validate("row"); }"#,
+        "add stale caller",
+    );
+    git_ok(&["switch", "-c", "add-banner", &base]);
+    write_commit(
+        "banner.ts",
+        r#"function banner() { return "hello"; }"#,
+        "add independent banner",
+    );
+    git_ok(&["switch", "change-signature"]);
+    let hook = install_check_hook(&workdir, false).expect("install merge check");
+    assert_eq!(hook.hook_path, repo.path().join("hooks").join("commit-msg"));
+
+    let ordinary = git(&["commit", "--allow-empty", "-m", "ordinary commit"]);
+    assert!(ordinary.status.success());
+    assert!(!String::from_utf8_lossy(&ordinary.stderr).contains("nex check hook:"));
+    let before_merge = git_ok(&["rev-parse", "HEAD"]);
+    let check_blocked = |args: &[&str]| {
+        let output = git(args);
+        assert!(!output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stdout.contains("SignatureMismatch") || stderr.contains("SignatureMismatch"),
+            "git {args:?}: {stdout}\n{stderr}"
+        );
+        assert_eq!(git_ok(&["rev-parse", "HEAD"]), before_merge);
+        git_ok(&["merge", "--abort"]);
+    };
+    check_blocked(&["merge", "--no-ff", "--no-edit", "add-stale-call"]);
+    git_ok(&["merge", "--no-ff", "--no-commit", "add-stale-call"]);
+    check_blocked(&["commit", "--no-edit"]);
+
+    let clean = git(&["merge", "--no-ff", "--no-edit", "add-banner"]);
+    let stdout = String::from_utf8_lossy(&clean.stdout);
+    let stderr = String::from_utf8_lossy(&clean.stderr);
+    assert!(clean.status.success(), "clean merge: {stdout}\n{stderr}");
+    assert!(
+        stdout.contains("No blocking semantic conflicts")
+            || stderr.contains("No blocking semantic conflicts")
+    );
+    assert_ne!(git_ok(&["rev-parse", "HEAD"]), before_merge);
+    assert_eq!(
+        git_ok(&["rev-parse", "HEAD^2"]),
+        git_ok(&["rev-parse", "add-banner"])
+    );
 }
 
 #[test]

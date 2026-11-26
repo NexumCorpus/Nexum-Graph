@@ -239,7 +239,7 @@ impl CodeGraph {
 - Step 1: Git read. Use git2 to read file trees at both refs without checkout. Collect source files by extension.
 - Step 2: Parse. Run appropriate SemanticExtractor per language. Tree-sitter queries extract function/class/interface nodes. Compute signature_hash and body_hash via BLAKE3 over normalized AST bytes.
 - Step 3: Build CodeGraphs. One per ref. Nodes = SemanticUnits, edges = dependency relationships.
-- Step 4: Diff. Match by qualified_name. Same name + different signature_hash = SignatureChanged. Same signature + different body_hash = BodyChanged. Same body_hash + different path = Moved. Unmatched = Added/Removed.
+- Step 4: Diff. Match by qualified_name and file path first. Pair a remaining name across paths only when one unmatched unit remains on each side. Compare signature_hash and body_hash for modifications. A matched unit with both hashes unchanged and a different path is a move. Unmatched units are additions or removals.
 - Step 5: Output. --format json|text|github. JSON schema versioned (v1). GitHub format emits annotations for Actions.
 
 ### Language Support

@@ -105,7 +105,7 @@ pub(crate) fn build_graph_at_ref(
 ///   caller can survive the merge: a caller X left identical to base while the
 ///   other branch modified or removed it is superseded by the other branch's
 ///   version in a 3-way merge, so it is skipped (see `superseded_in_merge`).
-/// - For units modified in both diffs (by qualified_name):
+/// - For units modified in both diffs (by qualified name and base file path):
 ///   - Both modify body -> ConcurrentBodyEdit (Warning)
 ///   - Both modify signature -> ConcurrentBodyEdit (Error)
 /// - For units added in both diffs with same qualified_name -> NamingCollision
@@ -121,6 +121,7 @@ pub(crate) fn cross_reference(
         base: graph_base,
         changing: graph_a,
         dependent: graph_b,
+        dependent_diff: diff_b,
         changing_label: "A",
         dependent_label: "B",
     };
@@ -128,6 +129,7 @@ pub(crate) fn cross_reference(
         base: graph_base,
         changing: graph_b,
         dependent: graph_a,
+        dependent_diff: diff_a,
         changing_label: "B",
         dependent_label: "A",
     };
@@ -251,6 +253,7 @@ struct BranchPair<'a> {
     base: &'a CodeGraph,
     changing: &'a CodeGraph,
     dependent: &'a CodeGraph,
+    dependent_diff: &'a SemanticDiff,
     changing_label: &'a str,
     dependent_label: &'a str,
 }
@@ -280,7 +283,10 @@ fn find_unit_at<'a>(graph: &'a CodeGraph, like: &SemanticUnit) -> Option<&'a Sem
     graph
         .units()
         .into_iter()
-        .find(|unit| unit.qualified_name == like.qualified_name && unit.file_path == like.file_path)
+        .filter(|unit| {
+            unit.qualified_name == like.qualified_name && unit.file_path == like.file_path
+        })
+        .max_by_key(|unit| unit.byte_range.start)
 }
 
 fn same_content(left: &SemanticUnit, right: &SemanticUnit) -> bool {
@@ -296,7 +302,7 @@ fn push_deleted_dependency_conflicts(
     let deleted_branch = pair.changing_label;
     let dependent_branch = pair.dependent_label;
     for removed_unit in removed_units {
-        let Some(other_unit) = find_unit_by_name(other_graph, &removed_unit.qualified_name) else {
+        let Some(other_unit) = find_corresponding_unit(pair, removed_unit) else {
             continue;
         };
 
@@ -337,19 +343,7 @@ fn push_signature_mismatch_conflicts(
         if !modified.changes.contains(&ChangeKind::SignatureChanged) {
             continue;
         }
-        // Name-based diffing pairs same-named units from different files (bare
-        // Python/TS names collide across modules). If the changing branch still
-        // holds the base unit untouched at its original file, the "signature
-        // change" is a new same-named unit elsewhere, not a change to this one.
-        if find_unit_at(pair.changing, &modified.before)
-            .is_some_and(|unit| same_content(unit, &modified.before))
-        {
-            continue;
-        }
-
-        let Some(other_unit) = find_unit_at(other_graph, &modified.before)
-            .or_else(|| find_unit_by_name(other_graph, &modified.after.qualified_name))
-        else {
+        let Some(other_unit) = find_corresponding_unit(pair, &modified.before) else {
             continue;
         };
 
@@ -382,19 +376,22 @@ fn push_concurrent_modification_conflicts(
     diff_a: &SemanticDiff,
     diff_b: &SemanticDiff,
 ) {
-    let modified_a: HashMap<&str, &nex_core::ModifiedUnit> = diff_a
+    let modified_b: HashMap<(&str, &Path), &nex_core::ModifiedUnit> = diff_b
         .modified
         .iter()
-        .map(|modified| (modified.after.qualified_name.as_str(), modified))
-        .collect();
-    let modified_b: HashMap<&str, &nex_core::ModifiedUnit> = diff_b
-        .modified
-        .iter()
-        .map(|modified| (modified.after.qualified_name.as_str(), modified))
+        .map(|modified| {
+            let unit = &modified.before;
+            (
+                (unit.qualified_name.as_str(), unit.file_path.as_path()),
+                modified,
+            )
+        })
         .collect();
 
-    for (name, modified_a_unit) in modified_a {
-        let Some(modified_b_unit) = modified_b.get(name).copied() else {
+    for modified_a_unit in &diff_a.modified {
+        let name = modified_a_unit.before.qualified_name.as_str();
+        let path = modified_a_unit.before.file_path.as_path();
+        let Some(modified_b_unit) = modified_b.get(&(name, path)).copied() else {
             continue;
         };
 
@@ -462,11 +459,32 @@ fn push_naming_collision_conflicts(
     }
 }
 
-fn find_unit_by_name<'a>(graph: &'a CodeGraph, name: &str) -> Option<&'a SemanticUnit> {
-    graph
-        .units()
-        .into_iter()
-        .find(|unit| unit.qualified_name == name)
+fn find_corresponding_unit<'a>(
+    pair: &BranchPair<'a>,
+    original: &SemanticUnit,
+) -> Option<&'a SemanticUnit> {
+    find_unit_at(pair.dependent, original).or_else(|| {
+        let relocated_id = pair
+            .dependent_diff
+            .moved
+            .iter()
+            .find(|entry| {
+                entry.old_path == original.file_path
+                    && entry.unit.qualified_name == original.qualified_name
+            })
+            .map(|entry| &entry.unit.id)
+            .or_else(|| {
+                pair.dependent_diff
+                    .modified
+                    .iter()
+                    .find(|entry| {
+                        entry.before.file_path == original.file_path
+                            && entry.before.qualified_name == original.qualified_name
+                    })
+                    .map(|entry| &entry.after.id)
+            })?;
+        pair.dependent.get(relocated_id)
+    })
 }
 
 fn severity_rank(severity: Severity) -> u8 {

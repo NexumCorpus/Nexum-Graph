@@ -3,15 +3,15 @@
 //! This crate owns:
 //! - `CodeGraph` - a directed graph of semantic units with dependency edges
 //! - Graph construction from `SemanticUnit` vectors
-//! - Graph diff algorithm (match by `qualified_name`, compare hashes)
+//! - Graph diff algorithm (match names at their file paths, compare hashes)
 //! - Caller/dependency queries
 //!
 //! The `CodeGraph` API is specified in the Implementation Specification and
 //! constitutes a contract. Codex implements the function bodies.
 //!
 //! Reviewing this file:
-//! - `diff()` is intentionally name-based, not id-based; matching happens on
-//!   `qualified_name`.
+//! - `diff()` matches `qualified_name` at the same path first. An unmatched
+//!   name can match across paths only if exactly one copy remains on each side.
 //! - Dependency edges do not influence diff classification; they matter later
 //!   for coordination and validation only.
 //! - If you change diff semantics, update `CORE_INVARIANTS.md` and the
@@ -23,6 +23,7 @@ use nex_core::{
 use petgraph::Direction;
 use petgraph::graph::{DiGraph, NodeIndex};
 use std::collections::HashMap;
+use std::path::Path;
 
 /// A dependency edge in the code graph.
 #[derive(Debug, Clone)]
@@ -43,8 +44,6 @@ pub struct SemanticNode {
 pub struct CodeGraph {
     graph: DiGraph<SemanticNode, DepEdge>,
     index: HashMap<SemanticId, NodeIndex>,
-    /// Secondary index: qualified_name -> NodeIndex for diff matching.
-    name_index: HashMap<String, NodeIndex>,
 }
 
 impl CodeGraph {
@@ -53,17 +52,14 @@ impl CodeGraph {
         Self {
             graph: DiGraph::new(),
             index: HashMap::new(),
-            name_index: HashMap::new(),
         }
     }
 
     /// Add a semantic unit as a node. Returns its NodeIndex.
     pub fn add_unit(&mut self, unit: SemanticUnit) -> NodeIndex {
-        let qualified_name = unit.qualified_name.clone();
         let id = unit.id;
         let index = self.graph.add_node(SemanticNode { unit });
         self.index.insert(id, index);
-        self.name_index.insert(qualified_name, index);
         index
     }
 
@@ -138,77 +134,97 @@ impl CodeGraph {
     /// Compute the semantic diff between `self` (before) and `other` (after).
     ///
     /// Algorithm (from spec):
-    /// - Match units by `qualified_name`
+    /// - Match units by `qualified_name` at the same path first, then compare
+    ///   uniquely unmatched names across paths.
     /// - Same name + different `signature_hash` -> SignatureChanged
     /// - Same signature + different `body_hash` -> BodyChanged
     /// - Same `body_hash` + different `file_path` -> Moved
     /// - Unmatched in `other` -> Added
     /// - Unmatched in `self` -> Removed
     pub fn diff(&self, other: &CodeGraph) -> SemanticDiff {
-        let self_by_name = self.units_by_name();
-        let other_by_name = other.units_by_name();
-
-        let mut added = Vec::new();
-        let mut removed = Vec::new();
-        let mut modified = Vec::new();
-        let mut moved = Vec::new();
-
-        for (name, other_unit) in &other_by_name {
-            if let Some(self_unit) = self_by_name.get(name) {
-                if self_unit.body_hash == other_unit.body_hash
-                    && self_unit.signature_hash == other_unit.signature_hash
-                {
-                    if self_unit.file_path != other_unit.file_path {
-                        moved.push(MovedUnit {
-                            unit: (*other_unit).clone(),
-                            old_path: self_unit.file_path.clone(),
-                            new_path: other_unit.file_path.clone(),
-                        });
-                    }
-                    continue;
-                }
-
-                let mut changes = Vec::new();
-                if self_unit.signature_hash != other_unit.signature_hash {
-                    changes.push(ChangeKind::SignatureChanged);
-                }
-                if self_unit.body_hash != other_unit.body_hash {
-                    changes.push(ChangeKind::BodyChanged);
-                }
-
-                modified.push(ModifiedUnit {
-                    before: (*self_unit).clone(),
-                    after: (*other_unit).clone(),
-                    changes,
-                });
+        let mut before = self.units_by_location();
+        let mut unmatched_after: HashMap<&str, Vec<&SemanticUnit>> = HashMap::new();
+        let mut diff = SemanticDiff {
+            added: Vec::new(),
+            removed: Vec::new(),
+            modified: Vec::new(),
+            moved: Vec::new(),
+        };
+        for (location, after_unit) in other.units_by_location() {
+            if let Some(before_unit) = before.remove(&location) {
+                record_matched_unit(&mut diff, before_unit, after_unit);
             } else {
-                added.push((*other_unit).clone());
+                unmatched_after
+                    .entry(location.0)
+                    .or_default()
+                    .push(after_unit);
             }
         }
-
-        for (name, self_unit) in &self_by_name {
-            if !other_by_name.contains_key(name) {
-                removed.push((*self_unit).clone());
+        let mut unmatched_before: HashMap<&str, Vec<&SemanticUnit>> = HashMap::new();
+        for ((name, _), before_unit) in before {
+            unmatched_before.entry(name).or_default().push(before_unit);
+        }
+        for (name, after_units) in unmatched_after {
+            let before_units = unmatched_before.remove(name).unwrap_or_default();
+            if let ([before_unit], [after_unit]) = (before_units.as_slice(), after_units.as_slice())
+            {
+                record_matched_unit(&mut diff, before_unit, after_unit);
+            } else {
+                diff.added.extend(after_units.into_iter().cloned());
+                diff.removed.extend(before_units.into_iter().cloned());
             }
         }
-
-        SemanticDiff {
-            added,
-            removed,
-            modified,
-            moved,
-        }
+        diff.removed
+            .extend(unmatched_before.into_values().flatten().cloned());
+        diff.added
+            .sort_by(|a, b| unit_location(a).cmp(&unit_location(b)));
+        diff.removed
+            .sort_by(|a, b| unit_location(a).cmp(&unit_location(b)));
+        diff.modified
+            .sort_by(|a, b| unit_location(&a.after).cmp(&unit_location(&b.after)));
+        diff.moved
+            .sort_by(|a, b| unit_location(&a.unit).cmp(&unit_location(&b.unit)));
+        diff
     }
 
-    fn units_by_name(&self) -> HashMap<&str, &SemanticUnit> {
-        self.name_index
-            .iter()
-            .filter_map(|(name, index)| {
-                self.graph
-                    .node_weight(*index)
-                    .map(|node| (name.as_str(), &node.unit))
-            })
-            .collect()
+    fn units_by_location(&self) -> HashMap<(&str, &Path), &SemanticUnit> {
+        let mut units = HashMap::<_, &SemanticUnit>::new();
+        for node in self.graph.node_weights() {
+            let unit = &node.unit;
+            let previous = units.entry(unit_location(unit)).or_insert(unit);
+            // With repeated definitions of a name at one path, keep the later one.
+            if unit.byte_range.start >= previous.byte_range.start {
+                *previous = unit;
+            }
+        }
+        units
+    }
+}
+
+fn unit_location(unit: &SemanticUnit) -> (&str, &Path) {
+    (&unit.qualified_name, &unit.file_path)
+}
+
+fn record_matched_unit(diff: &mut SemanticDiff, before: &SemanticUnit, after: &SemanticUnit) {
+    let mut changes = Vec::new();
+    if before.signature_hash != after.signature_hash {
+        changes.push(ChangeKind::SignatureChanged);
+    }
+    if before.body_hash != after.body_hash {
+        changes.push(ChangeKind::BodyChanged);
+    }
+    if !changes.is_empty() {
+        diff.modified.push(ModifiedUnit {
+            before: before.clone(),
+            after: after.clone(),
+            changes,
+        });
+    } else if before.file_path != after.file_path {
+        diff.moved.push(MovedUnit {
+            unit: after.clone(),
+            old_path: before.file_path.clone(),
+            new_path: after.file_path.clone(),
+        });
     }
 }
 
