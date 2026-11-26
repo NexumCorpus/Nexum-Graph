@@ -131,6 +131,49 @@ class VerifyTreeTests(unittest.TestCase):
         self.assertEqual(report["status"], "passed")
         self.assertEqual(report["tree"], tree)
 
+    def test_pinned_probe_uses_its_source_tree_and_the_candidate_cwd(self) -> None:
+        self.stage("first.txt", "passing")
+        self.stage("probe.py", CHECK)
+        source = self.git("write-tree").stdout.strip()
+        self.stage("probe.py", "raise SystemExit(42)")
+        (self.repo / "probe.py").write_text("raise SystemExit(43)", encoding="utf-8")
+
+        report = self.verify(
+            "run", "--probe", source, "probe.py", "--scratch", str(self.directory), "--receipt", str(self.receipt),
+        )
+        comparison = self.verify("match", "--probe", source, "probe.py", "--index", str(self.receipt))
+
+        self.assertEqual(report["status"], "passed")
+        self.assertEqual(report["probe"]["blob"], self.git("rev-parse", f"{source}:probe.py").stdout.strip())
+        self.assertTrue(comparison["matched"])
+        other = self.verify("match", "--probe", report["tree"], "probe.py", "--index", str(self.receipt), expected=1)
+        self.assertTrue(other["same_tree"])
+        self.assertFalse(other["same_probe"])
+
+    def test_pinned_probe_detects_compatibility_loss_with_a_passing_branch_check(self) -> None:
+        self.stage("first.txt", "passing")
+        self.stage("probe.py", CHECK)
+        source = self.git("write-tree").stdout.strip()
+        self.stage("first.txt", "failing")
+        self.stage("probe.py", CHECK.replace("'passing'", "'failing'"))
+        branch_receipt = self.directory / "branch-receipt.json"
+        branch = self.verify(
+            "run", "--scratch", str(self.directory), "--receipt", str(branch_receipt),
+            "--", sys.executable, "-B", "probe.py",
+        )
+        pinned = self.verify(
+            "run", "--probe", source, "probe.py", "--scratch", str(self.directory),
+            "--receipt", str(self.receipt), expected=1,
+        )
+
+        self.assertEqual(branch["tree"], pinned["tree"])
+        self.assertEqual(branch["status"], "passed")
+        self.assertEqual(pinned["status"], "failed")
+        legacy = self.verify("match", "--probe", source, "probe.py", "--index", str(branch_receipt), expected=1)
+        self.assertTrue(legacy["same_tree"])
+        self.assertTrue(legacy["passed_receipt"])
+        self.assertFalse(legacy["same_probe"])
+
     def test_compose_uses_proposals_instead_of_the_shared_index(self) -> None:
         source = "opening\nx1\nx2\nx3\nx4\nx5\nclosing\n"
         self.stage("notes.txt", source)
