@@ -656,6 +656,15 @@ For parallel checks, run `git write-tree` once and give each worker the resultin
 
 To combine two proposals from the same starting tree, capture each worker's changes in its own worktree and keep the proposal commits reachable. With Git 2.45 or later, run `python tools/verify_tree.py compose --base BASE_TREE LEFT_TREE RIGHT_TREE` with all three full tree IDs. On success the JSON reports the input IDs and a `tree` for `run --tree`. On conflict it reports the paths and exits 1. Keep the JSON with the worker proposals and compare the tested result to the actual landing with `match`.
 
+For a standalone Python check written against an existing behavior, pin the script to its source tree. Run it against the base first, then use the same `--probe` on the candidate:
+
+```bash
+python tools/verify_tree.py run --tree CANDIDATE_TREE --probe BASE_TREE tools/old_caller.py --scratch ../nexum-checks --receipt ../nexum-checks/candidate.json
+python tools/verify_tree.py match --probe BASE_TREE tools/old_caller.py ../nexum-checks/candidate.json CANDIDATE_COMMIT
+```
+
+The probe runs from a separate copy with the tested snapshot as the working directory. Use `Path.cwd()` to locate the candidate's files. The receipt records the source tree, file path and blob ID. `match --probe` requires that same probe and a passing result for the target tree.
+
 The snapshot covers regular tracked files. Use a trusted interpreter and test command, with any dependencies provided separately. A receipt is local and unsigned. The snapshots remain available for inspection, including after timeouts. A timed-out command can leave a child process running in the snapshot, and its receipt cannot pass `match`.
 
 If you plan to contribute, start with [CONTRIBUTING.md](./CONTRIBUTING.md).

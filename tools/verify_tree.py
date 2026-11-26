@@ -7,6 +7,7 @@ import os
 from pathlib import Path, PureWindowsPath
 import stat
 import subprocess
+import sys
 import tempfile
 
 
@@ -131,10 +132,20 @@ def unchanged(directory, name, mode, oid, algorithm):
         return blob_id(file, info.st_size, algorithm) == oid and not file.read(1)
 
 
+def probe_binding(repo, spec, algorithm):
+    source, path = spec
+    tree = exact_tree(repo, source, algorithm)
+    mode_and_blob = read_entries(repo, tree).get(path)
+    if mode_and_blob is None:
+        raise ValueError(f"No probe at {path} in tree {tree}")
+    mode, blob = mode_and_blob
+    return {"tree": tree, "path": path, "mode": mode, "blob": blob}
+
+
 def check_run(args):
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
-    if not command or args.timeout < 1:
-        raise ValueError("Pass a positive timeout and an explicit check command after --")
+    if args.timeout < 1 or bool(command) == bool(args.probe):
+        raise ValueError("Pass a positive timeout and either a command after -- or --probe TREE PATH")
     if args.receipt.exists():
         raise ValueError(f"Receipt already exists: {args.receipt}")
 
@@ -144,7 +155,14 @@ def check_run(args):
     else:
         tree = exact_tree(args.repo, args.tree, algorithm)
     entries = read_entries(args.repo, tree)
-    snapshot = Path(tempfile.mkdtemp(prefix="nexum-tree-", dir=args.scratch.resolve(strict=True)))
+    scratch = args.scratch.resolve(strict=True)
+    probe = probe_binding(args.repo, args.probe, algorithm) if args.probe else None
+    if probe is not None:
+        probe_folder = Path(tempfile.mkdtemp(prefix="nexum-probe-", dir=scratch))
+        probe_path = probe["path"]
+        materialize(args.repo, probe_folder, {probe_path: (probe["mode"], probe["blob"])}, algorithm)
+        command = [sys.executable, "-I", "-B", "-X", "utf8", str(probe_folder / probe_path)]
+    snapshot = Path(tempfile.mkdtemp(prefix="nexum-tree-", dir=scratch))
     materialize(args.repo, snapshot, entries, algorithm)
 
     # Do not pass Git's source index or worktree overrides into the check.
@@ -165,10 +183,15 @@ def check_run(args):
     receipt = {"schema": SCHEMA, "tree": tree, "object_format": algorithm, "test_argv": command,
                "test_exit": exit_code, "status": status, "changed_tracked_inputs": changed,
                "snapshot": snapshot.as_posix(), "tracked_files": len(entries)}
+    if probe is not None:
+        probe_changed = not unchanged(probe_folder, probe_path, probe["mode"], probe["blob"], algorithm)
+        if probe_changed and status != "timed_out":
+            receipt["status"] = "probe_changed"
+        receipt.update(probe=probe, probe_changed=probe_changed)
     with args.receipt.open("x", encoding="utf-8") as output:
         json.dump(receipt, output, indent=2)
         output.write("\n")
-    return receipt, int(status != "passed")
+    return receipt, int(receipt["status"] != "passed")
 
 
 def check_match(args):
@@ -189,6 +212,11 @@ def check_match(args):
     passed = (receipt.get("status") == "passed" and type(exit_code) is int and exit_code == 0
               and receipt.get("changed_tracked_inputs") == [])
     matched = same_tree and passed
+    if args.probe:
+        expected_probe = probe_binding(args.repo, args.probe, algorithm)
+        same_probe = receipt.get("probe") == expected_probe and receipt.get("probe_changed") is False
+        target["same_probe"] = same_probe
+        matched = matched and same_probe
     return {**target, "tested_tree": receipt.get("tree"),
             "same_tree": same_tree, "passed_receipt": passed, "matched": matched}, int(not matched)
 
@@ -199,6 +227,7 @@ def main():
     run = actions.add_parser("run", help="Check the index tree or a supplied tree in its own directory.")
     run.add_argument("--repo", type=Path, default=Path.cwd())
     run.add_argument("--tree", help="Full tree object ID. When omitted, capture the current index.")
+    run.add_argument("--probe", nargs=2, metavar=("TREE", "PATH"), help="Run a Python probe from a pinned tree.")
     run.add_argument("--scratch", type=Path, required=True)
     run.add_argument("--receipt", type=Path, required=True)
     run.add_argument("--timeout", type=int, default=60)
@@ -211,6 +240,7 @@ def main():
     match = actions.add_parser("match", help="Check a passing receipt against a commit or the active index.")
     match.add_argument("--repo", type=Path, default=Path.cwd())
     match.add_argument("--index", action="store_true", help="Compare the effective Git index visible to this process.")
+    match.add_argument("--probe", nargs=2, metavar=("TREE", "PATH"), help="Require the same pinned probe.")
     match.add_argument("receipt", type=Path)
     match.add_argument("commit", nargs="?")
     args = parser.parse_args()
